@@ -1,0 +1,8 @@
+{
+  "jsc": {
+    "parser": { "syntax": "typescript", "decorators": true },
+    "transform": { "decoratorMetadata": true, "legacyDecorator": true },
+    "target": "es2021"
+  },
+  "module": { "type": "commonjs" }
+}
