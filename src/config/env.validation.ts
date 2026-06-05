@@ -9,7 +9,7 @@ class EnvironmentVariables {
   DB_PORT: number;
 
   @IsString()
-  DB_USERNAME: string;
+  DB_USER: string;
 
   @IsString()
   DB_PASSWORD: string;
@@ -18,13 +18,13 @@ class EnvironmentVariables {
   DB_NAME: string;
 
   @IsString()
-  JWT_ACCESS_SECRET: string;
+  JWT_SECRET: string;
 
   @IsString()
   JWT_REFRESH_SECRET: string;
 
   @IsString()
-  JWT_ACCESS_EXPIRES_IN: string;
+  JWT_EXPIRES_IN: string;
 
   @IsString()
   JWT_REFRESH_EXPIRES_IN: string;
