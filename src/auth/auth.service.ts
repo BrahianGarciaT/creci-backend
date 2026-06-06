@@ -27,6 +27,8 @@ export class AuthService {
     const passwordMatch = await bcrypt.compare(dto.password, user.password);
     if (!passwordMatch) throw new UnauthorizedException('Invalid credentials');
 
+    if (!user.isActive) throw new UnauthorizedException('Account is disabled');
+
     return this.generateTokenPair(user);
   }
 

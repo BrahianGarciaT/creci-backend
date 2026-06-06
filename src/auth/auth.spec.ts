@@ -14,6 +14,7 @@ const mockUser: User = {
   email: 'dev@example.com',
   password: 'hashed-password',
   role: UserRole.DEVELOPER,
+  isActive: true,
   refreshToken: null,
   createdAt: new Date(),
   updatedAt: new Date(),
