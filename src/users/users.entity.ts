@@ -25,6 +25,10 @@ export class User {
   @Column({ type: 'enum', enum: UserRole, default: UserRole.DEVELOPER })
   role: UserRole;
 
+  // Indica si la cuenta está activa; se pone en false al desactivar (soft-delete)
+  @Column({ name: 'is_active', default: true })
+  isActive: boolean;
+
   @Column({ name: 'refresh_token', nullable: true, type: 'text' })
   refreshToken: string | null;
 
