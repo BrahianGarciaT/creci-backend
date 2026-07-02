@@ -56,7 +56,6 @@ export class ProjectsService {
 
     if (dto.name !== undefined) project.name = dto.name;
     if (dto.description !== undefined) project.description = dto.description ?? null;
-    if (dto.status !== undefined) project.status = dto.status;
 
     const saved = await this.projectsRepository.save(project);
     return ProjectResponseDto.from(saved);
