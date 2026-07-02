@@ -2,9 +2,11 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  ManyToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { Project } from '../projects/projects.entity';
 
 export enum UserRole {
   ADMIN = 'admin',
@@ -31,6 +33,10 @@ export class User {
 
   @Column({ name: 'refresh_token', nullable: true, type: 'text' })
   refreshToken: string | null;
+
+  // Relación inversa: proyectos a los que está asignado este usuario
+  @ManyToMany(() => Project, (project) => project.developers)
+  projects: Project[];
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
