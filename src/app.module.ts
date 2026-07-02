@@ -7,6 +7,8 @@ import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { validate } from './config/env.validation';
+import { Project } from './projects/projects.entity';
+import { ProjectsModule } from './projects/projects.module';
 import { User } from './users/users.entity';
 import { UsersModule } from './users/users.module';
 
@@ -22,12 +24,13 @@ import { UsersModule } from './users/users.module';
         username: config.getOrThrow<string>('DB_USER'),
         password: config.getOrThrow<string>('DB_PASSWORD'),
         database: config.getOrThrow<string>('DB_NAME'),
-        entities: [User],
+        entities: [User, Project],
         synchronize: true,
       }),
     }),
     UsersModule,
     AuthModule,
+    ProjectsModule,
   ],
   controllers: [AppController],
   providers: [
