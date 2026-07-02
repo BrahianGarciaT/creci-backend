@@ -5,6 +5,7 @@ This app has its **own independent git repository** rooted at `apps/backend/`.
 - All git commands must run from `apps/backend/` (or deeper), never from the monorepo root.
 - Never run `git` from `d:/proyects/creci-app` — there is no git repo there.
 - Branches, commits, and PRs belong to this repo only.
+- Commit messages MUST be in Spanish. Use conventional commits format (`feat:`, `fix:`, `chore:`, etc.) with the description in Spanish.
 
 ## Language
 - All code (variables, functions, classes, files, folders) in **English**
