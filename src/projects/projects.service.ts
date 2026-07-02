@@ -25,7 +25,7 @@ export class ProjectsService {
   // Devuelve todos los proyectos con sus developers asociados
   async findAll(): Promise<ProjectResponseDto[]> {
     const projects = await this.projectsRepository.find({
-      relations: ['developers'],
+      relations: { developers: true },
     });
     return projects.map(ProjectResponseDto.from);
   }
@@ -41,7 +41,7 @@ export class ProjectsService {
     // Recarga con relaciones para consistencia en la respuesta
     const withRelations = await this.projectsRepository.findOne({
       where: { id: saved.id },
-      relations: ['developers'],
+      relations: { developers: true },
     });
     return ProjectResponseDto.from(withRelations!);
   }
@@ -50,7 +50,7 @@ export class ProjectsService {
   async update(id: string, dto: UpdateProjectDto): Promise<ProjectResponseDto> {
     const project = await this.projectsRepository.findOne({
       where: { id },
-      relations: ['developers'],
+      relations: { developers: true },
     });
     if (!project) throw new NotFoundException('Project not found');
 
@@ -66,7 +66,7 @@ export class ProjectsService {
   async deactivate(id: string): Promise<ProjectResponseDto> {
     const project = await this.projectsRepository.findOne({
       where: { id },
-      relations: ['developers'],
+      relations: { developers: true },
     });
     if (!project) throw new NotFoundException('Project not found');
 
@@ -87,7 +87,7 @@ export class ProjectsService {
   ): Promise<ProjectResponseDto> {
     const project = await this.projectsRepository.findOne({
       where: { id },
-      relations: ['developers'],
+      relations: { developers: true },
     });
     if (!project) throw new NotFoundException('Project not found');
 
@@ -128,7 +128,7 @@ export class ProjectsService {
     // Recarga para incluir las relaciones completas en la respuesta
     const withRelations = await this.projectsRepository.findOne({
       where: { id: saved.id },
-      relations: ['developers'],
+      relations: { developers: true },
     });
     return ProjectResponseDto.from(withRelations!);
   }

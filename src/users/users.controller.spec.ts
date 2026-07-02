@@ -157,7 +157,7 @@ describe('UsersController', () => {
 
     it('propaga ForbiddenException (403) cuando el target es ADMIN', async () => {
       mockUsersService.deactivate.mockRejectedValue(
-        new ForbiddenException('Cannot deactivate an administrator account'),
+        new ForbiddenException('Admin accounts cannot be deactivated'),
       );
 
       await expect(controller.deactivate('admin-uuid', actor)).rejects.toThrow(ForbiddenException);

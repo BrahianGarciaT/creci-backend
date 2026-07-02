@@ -1,5 +1,5 @@
 import { IsEnum, IsOptional } from 'class-validator';
-import { PartialType } from '@nestjs/mapped-types';
+import { PartialType } from '@nestjs/swagger';
 import { CreateProjectDto } from './create-project.dto';
 import { ProjectStatus } from '../projects.entity';
 

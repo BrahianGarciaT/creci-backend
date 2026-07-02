@@ -76,7 +76,7 @@ export class UsersService {
 
     // Solo se pueden desactivar cuentas con rol DEVELOPER
     if (target.role === UserRole.ADMIN) {
-      throw new ForbiddenException('Cannot deactivate an administrator account');
+      throw new ForbiddenException('Admin accounts cannot be deactivated');
     }
 
     // Idempotente: si ya está inactivo se devuelve el DTO sin error

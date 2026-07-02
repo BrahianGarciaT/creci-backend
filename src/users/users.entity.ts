@@ -34,9 +34,9 @@ export class User {
   @Column({ name: 'refresh_token', nullable: true, type: 'text' })
   refreshToken: string | null;
 
-  // Relación inversa: proyectos a los que está asignado este usuario
+  // Relación inversa: proyectos a los que está asignado este usuario (cargada explícitamente con relations)
   @ManyToMany(() => Project, (project) => project.developers)
-  projects: Project[];
+  projects?: Project[];
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

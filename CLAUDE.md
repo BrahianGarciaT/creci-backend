@@ -1,5 +1,11 @@
 # Project conventions — Backend (NestJS)
 
+## Git repository
+This app has its **own independent git repository** rooted at `apps/backend/`.
+- All git commands must run from `apps/backend/` (or deeper), never from the monorepo root.
+- Never run `git` from `d:/proyects/creci-app` — there is no git repo there.
+- Branches, commits, and PRs belong to this repo only.
+
 ## Language
 - All code (variables, functions, classes, files, folders) in **English**
 - Comments and documentation directed at the development team in **Spanish**
