@@ -42,4 +42,10 @@ export class UsersController {
   ): Promise<UserResponseDto> {
     return this.usersService.deactivate(id, actor);
   }
+
+  // PATCH /users/:id/reactivate — reactiva la cuenta de un usuario previamente desactivado
+  @Patch(':id/reactivate')
+  reactivate(@Param('id') id: string): Promise<UserResponseDto> {
+    return this.usersService.reactivate(id);
+  }
 }

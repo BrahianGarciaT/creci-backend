@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -86,5 +87,16 @@ export class UsersService {
 
     await this.usersRepository.update(id, { isActive: false });
     return UserResponseDto.from({ ...target, isActive: false });
+  }
+
+  // Reactiva un usuario previamente desactivado; lanza 400 si ya está activo
+  async reactivate(id: string): Promise<UserResponseDto> {
+    const target = await this.findById(id);
+    if (!target) throw new NotFoundException('User not found');
+    if (target.isActive) {
+      throw new BadRequestException('User is already active');
+    }
+    await this.usersRepository.update(id, { isActive: true });
+    return UserResponseDto.from({ ...target, isActive: true });
   }
 }

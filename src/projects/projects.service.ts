@@ -79,6 +79,21 @@ export class ProjectsService {
     return ProjectResponseDto.from(saved);
   }
 
+  // Reactiva un proyecto (revierte soft-delete); lanza 400 si ya está activo
+  async reactivate(id: string): Promise<ProjectResponseDto> {
+    const project = await this.projectsRepository.findOne({
+      where: { id },
+      relations: { developers: true },
+    });
+    if (!project) throw new NotFoundException('Project not found');
+    if (project.status === ProjectStatus.ACTIVE) {
+      throw new BadRequestException('Project is already active');
+    }
+    project.status = ProjectStatus.ACTIVE;
+    const saved = await this.projectsRepository.save(project);
+    return ProjectResponseDto.from(saved);
+  }
+
   // Reemplaza todos los developers del proyecto. Valida que cada id sea un usuario
   // activo con rol DEVELOPER; lanza 400 si alguno no cumple el criterio.
   async assignDevelopers(

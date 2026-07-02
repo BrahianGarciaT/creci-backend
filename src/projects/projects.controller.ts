@@ -51,6 +51,12 @@ export class ProjectsController {
     return this.projectsService.deactivate(id);
   }
 
+  // PATCH /projects/:id/reactivate — reactiva un proyecto previamente desactivado
+  @Patch(':id/reactivate')
+  reactivate(@Param('id') id: string): Promise<ProjectResponseDto> {
+    return this.projectsService.reactivate(id);
+  }
+
   // PUT /projects/:id/developers — reemplaza todos los developers del proyecto
   @Put(':id/developers')
   assignDevelopers(
