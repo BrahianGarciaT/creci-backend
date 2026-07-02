@@ -9,6 +9,8 @@ import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { validate } from './config/env.validation';
 import { Project } from './projects/projects.entity';
 import { ProjectsModule } from './projects/projects.module';
+import { Task } from './tasks/tasks.entity';
+import { TasksModule } from './tasks/tasks.module';
 import { User } from './users/users.entity';
 import { UsersModule } from './users/users.module';
 
@@ -24,13 +26,14 @@ import { UsersModule } from './users/users.module';
         username: config.getOrThrow<string>('DB_USER'),
         password: config.getOrThrow<string>('DB_PASSWORD'),
         database: config.getOrThrow<string>('DB_NAME'),
-        entities: [User, Project],
+        entities: [User, Project, Task],
         synchronize: true,
       }),
     }),
     UsersModule,
     AuthModule,
     ProjectsModule,
+    TasksModule,
   ],
   controllers: [AppController],
   providers: [
