@@ -22,6 +22,17 @@ export class ProjectsService {
     private readonly usersRepository: Repository<User>,
   ) {}
 
+  // Devuelve los proyectos donde el usuario autenticado es developer
+  async findMine(userId: string): Promise<ProjectResponseDto[]> {
+    const projects = await this.projectsRepository
+      .createQueryBuilder('project')
+      .innerJoin('project.developers', 'dev', 'dev.id = :userId', { userId })
+      .leftJoinAndSelect('project.developers', 'developer')
+      .where('project.status = :status', { status: ProjectStatus.ACTIVE })
+      .getMany();
+    return projects.map(ProjectResponseDto.from);
+  }
+
   // Devuelve todos los proyectos con sus developers asociados
   async findAll(): Promise<ProjectResponseDto[]> {
     const projects = await this.projectsRepository.find({
