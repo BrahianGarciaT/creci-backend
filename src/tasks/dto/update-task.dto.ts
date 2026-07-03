@@ -1,4 +1,4 @@
-import { PartialType } from '@nestjs/mapped-types';
+import { PartialType } from '@nestjs/swagger';
 import { IsDate, IsEnum, IsOptional } from 'class-validator';
 import { Type } from 'class-transformer';
 import { TaskStatus } from '../tasks.entity';
