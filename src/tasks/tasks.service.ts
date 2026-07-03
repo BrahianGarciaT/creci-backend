@@ -57,7 +57,10 @@ export class TasksService {
   // Devuelve todas las tareas (incluyendo canceladas); opcionalmente filtra por proyecto
   async findAll(projectId?: string): Promise<TaskResponseDto[]> {
     const where = projectId ? { projectId } : {};
-    const tasks = await this.tasksRepository.find({ where });
+    const tasks = await this.tasksRepository.find({
+      where,
+      relations: { project: true, assignee: true },
+    });
     return tasks.map(TaskResponseDto.from);
   }
 
@@ -79,6 +82,7 @@ export class TasksService {
         projectId,
         status: Not(TaskStatus.CANCELLED),
       },
+      relations: { project: true, assignee: true },
     });
     return tasks.map(TaskResponseDto.from);
   }
