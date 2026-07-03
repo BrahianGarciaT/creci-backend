@@ -1,4 +1,5 @@
 import {
+  IsDateString,
   IsEnum,
   IsNotEmpty,
   IsNumber,
@@ -33,4 +34,8 @@ export class CreateTaskDto {
   @IsNumber()
   @IsPositive()
   estimatedHours?: number;
+
+  @IsOptional()
+  @IsDateString()
+  dueDate?: string;
 }

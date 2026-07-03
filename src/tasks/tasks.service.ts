@@ -47,6 +47,7 @@ export class TasksService {
       projectId: dto.projectId,
       assigneeId: dto.assigneeId ?? null,
       estimatedHours: dto.estimatedHours ?? null,
+      dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
     });
 
     const saved = await this.tasksRepository.save(task);
@@ -91,7 +92,7 @@ export class TasksService {
     if (dto.description !== undefined) task.description = dto.description ?? null;
     if (dto.status !== undefined) task.status = dto.status;
     if (dto.priority !== undefined) task.priority = dto.priority;
-    if (dto.dueDate !== undefined) task.dueDate = dto.dueDate ?? null;
+    if (dto.dueDate !== undefined) task.dueDate = dto.dueDate ? new Date(dto.dueDate) : null;
     if (dto.estimatedHours !== undefined) task.estimatedHours = dto.estimatedHours ?? null;
     if (dto.projectId !== undefined) task.projectId = dto.projectId;
     if (dto.assigneeId !== undefined) task.assigneeId = dto.assigneeId ?? null;
