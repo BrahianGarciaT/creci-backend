@@ -167,7 +167,7 @@ describe('TasksService', () => {
 
       const result = await service.findAll();
 
-      expect(mockTasksRepository.find).toHaveBeenCalledWith({ where: {} });
+      expect(mockTasksRepository.find).toHaveBeenCalledWith({ where: {}, relations: { project: true, assignee: true } });
       expect(result).toHaveLength(2);
     });
 
@@ -178,6 +178,7 @@ describe('TasksService', () => {
 
       expect(mockTasksRepository.find).toHaveBeenCalledWith({
         where: { projectId: 'proj-uuid-1' },
+        relations: { project: true, assignee: true },
       });
     });
   });
