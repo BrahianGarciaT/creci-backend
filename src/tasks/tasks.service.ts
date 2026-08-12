@@ -56,12 +56,16 @@ export class TasksService {
     return TaskResponseDto.from(saved);
   }
 
-  // Devuelve todas las tareas (incluyendo canceladas); opcionalmente filtra por proyecto
+  // Devuelve todas las tareas (incluyendo canceladas); opcionalmente filtra por proyecto.
+  // Orden explícito por createdAt: sin ORDER BY, Postgres no garantiza orden estable y
+  // un UPDATE puede reubicar la fila (MVCC), haciendo que la tarea "salte" de posición
+  // en el cliente justo al editarla.
   async findAll(projectId?: string): Promise<TaskResponseDto[]> {
     const where = projectId ? { projectId } : {};
     const tasks = await this.tasksRepository.find({
       where,
       relations: { project: true, assignee: true },
+      order: { createdAt: 'ASC' },
     });
     return tasks.map(TaskResponseDto.from);
   }
@@ -76,6 +80,7 @@ export class TasksService {
         status: Not(TaskStatus.CANCELLED),
       },
       relations: { project: true, assignee: true },
+      order: { createdAt: 'ASC' },
     });
     return tasks.map(TaskResponseDto.from);
   }

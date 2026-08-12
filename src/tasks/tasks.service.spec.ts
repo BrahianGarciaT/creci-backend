@@ -173,7 +173,11 @@ describe('TasksService', () => {
 
       const result = await service.findAll();
 
-      expect(mockTasksRepository.find).toHaveBeenCalledWith({ where: {}, relations: { project: true, assignee: true } });
+      expect(mockTasksRepository.find).toHaveBeenCalledWith({
+        where: {},
+        relations: { project: true, assignee: true },
+        order: { createdAt: 'ASC' },
+      });
       expect(result).toHaveLength(2);
     });
 
@@ -185,6 +189,7 @@ describe('TasksService', () => {
       expect(mockTasksRepository.find).toHaveBeenCalledWith({
         where: { projectId: 'proj-uuid-1' },
         relations: { project: true, assignee: true },
+        order: { createdAt: 'ASC' },
       });
     });
   });
@@ -204,6 +209,9 @@ describe('TasksService', () => {
       expect(mockProjectAccessService.assertCanRead).toHaveBeenCalledWith('proj-uuid-1', dev, {
         allowAdmin: false,
       });
+      expect(mockTasksRepository.find).toHaveBeenCalledWith(
+        expect.objectContaining({ order: { createdAt: 'ASC' } }),
+      );
       expect(result).toHaveLength(1);
       expect(result[0].status).toBe(TaskStatus.IN_PROGRESS);
     });
