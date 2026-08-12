@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
@@ -162,6 +163,15 @@ describe('TasksController', () => {
 
       await expect(controller.update('nonexistent', {})).rejects.toThrow(NotFoundException);
     });
+
+    it('propaga BadRequestException (400) cuando el servicio rechaza reabrir una tarea done', async () => {
+      const dto: UpdateTaskDto = { status: TaskStatus.TODO as any };
+      mockTasksService.update.mockRejectedValue(
+        new BadRequestException('A completed task cannot change status. Create a new task instead.'),
+      );
+
+      await expect(controller.update('task-uuid-1', dto)).rejects.toThrow(BadRequestException);
+    });
   });
 
   // ── PATCH /tasks/:id/status ──────────────────────────────────────────────────
@@ -187,6 +197,16 @@ describe('TasksController', () => {
       );
 
       await expect(controller.updateStatus('task-uuid-1', dto, dev)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('propaga BadRequestException (400) cuando el servicio rechaza reabrir una tarea done', async () => {
+      const dev = makeUser();
+      const dto: UpdateStatusDto = { status: TaskStatus.TODO as any };
+      mockTasksService.updateStatus.mockRejectedValue(
+        new BadRequestException('A completed task cannot change status. Create a new task instead.'),
+      );
+
+      await expect(controller.updateStatus('task-uuid-1', dto, dev)).rejects.toThrow(BadRequestException);
     });
   });
 
@@ -233,6 +253,14 @@ describe('TasksController', () => {
       mockTasksService.softCancel.mockRejectedValue(new NotFoundException('Task not found'));
 
       await expect(controller.softCancel('nonexistent')).rejects.toThrow(NotFoundException);
+    });
+
+    it('propaga BadRequestException (400) cuando el servicio rechaza cancelar una tarea done', async () => {
+      mockTasksService.softCancel.mockRejectedValue(
+        new BadRequestException('A completed task cannot change status. Create a new task instead.'),
+      );
+
+      await expect(controller.softCancel('task-uuid-1')).rejects.toThrow(BadRequestException);
     });
   });
 

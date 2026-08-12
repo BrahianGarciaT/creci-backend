@@ -254,6 +254,56 @@ describe('TasksService', () => {
 
       await expect(service.update('nonexistent', {})).rejects.toThrow(NotFoundException);
     });
+
+    it('lanza BadRequestException (400) cuando intenta reabrir una tarea done', async () => {
+      const task = makeTask({ status: TaskStatus.DONE });
+      const dto: UpdateTaskDto = { status: TaskStatus.TODO as any };
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+
+      await expect(service.update('task-uuid-1', dto)).rejects.toThrow(BadRequestException);
+      expect(mockTasksRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('permite el no-op done -> done', async () => {
+      const task = makeTask({ status: TaskStatus.DONE });
+      const dto: UpdateTaskDto = { status: TaskStatus.DONE as any };
+      const saved = makeTask({ status: TaskStatus.DONE });
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+      mockTasksRepository.save.mockResolvedValue(saved);
+
+      const result = await service.update('task-uuid-1', dto);
+
+      expect(result.status).toBe(TaskStatus.DONE);
+    });
+
+    it('permite editar campos no relacionados con status en una tarea done', async () => {
+      const task = makeTask({ status: TaskStatus.DONE });
+      const dto: UpdateTaskDto = { title: 'Nuevo título' };
+      const saved = makeTask({ status: TaskStatus.DONE, title: 'Nuevo título' });
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+      mockTasksRepository.save.mockResolvedValue(saved);
+
+      const result = await service.update('task-uuid-1', dto);
+
+      expect(result.title).toBe('Nuevo título');
+      expect(result.status).toBe(TaskStatus.DONE);
+    });
+
+    it('permite reabrir una tarea cancelled (no es terminal)', async () => {
+      const task = makeTask({ status: TaskStatus.CANCELLED });
+      const dto: UpdateTaskDto = { status: TaskStatus.TODO as any };
+      const saved = makeTask({ status: TaskStatus.TODO });
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+      mockTasksRepository.save.mockResolvedValue(saved);
+
+      const result = await service.update('task-uuid-1', dto);
+
+      expect(result.status).toBe(TaskStatus.TODO);
+    });
   });
 
   // ── updateStatus ─────────────────────────────────────────────────────────────
@@ -299,6 +349,56 @@ describe('TasksService', () => {
       const dto: UpdateStatusDto = { status: TaskStatus.DONE as any };
 
       await expect(service.updateStatus('nonexistent', dto, dev)).rejects.toThrow(NotFoundException);
+    });
+
+    it('lanza BadRequestException (400) al intentar reabrir una tarea done (done -> todo)', async () => {
+      const dev = makeUser();
+      const task = makeTask({ assigneeId: dev.id, status: TaskStatus.DONE });
+      const dto: UpdateStatusDto = { status: TaskStatus.TODO as any };
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+
+      await expect(service.updateStatus('task-uuid-1', dto, dev)).rejects.toThrow(BadRequestException);
+      expect(mockTasksRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('lanza BadRequestException (400) al intentar reabrir una tarea done (done -> in_progress)', async () => {
+      const dev = makeUser();
+      const task = makeTask({ assigneeId: dev.id, status: TaskStatus.DONE });
+      const dto: UpdateStatusDto = { status: TaskStatus.IN_PROGRESS as any };
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+
+      await expect(service.updateStatus('task-uuid-1', dto, dev)).rejects.toThrow(BadRequestException);
+      expect(mockTasksRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('permite el no-op done -> done', async () => {
+      const dev = makeUser();
+      const task = makeTask({ assigneeId: dev.id, status: TaskStatus.DONE });
+      const dto: UpdateStatusDto = { status: TaskStatus.DONE as any };
+      const saved = makeTask({ assigneeId: dev.id, status: TaskStatus.DONE });
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+      mockTasksRepository.save.mockResolvedValue(saved);
+
+      const result = await service.updateStatus('task-uuid-1', dto, dev);
+
+      expect(result.status).toBe(TaskStatus.DONE);
+    });
+
+    it('permite transiciones libres desde cancelled (no es terminal)', async () => {
+      const dev = makeUser();
+      const task = makeTask({ assigneeId: dev.id, status: TaskStatus.CANCELLED });
+      const dto: UpdateStatusDto = { status: TaskStatus.TODO as any };
+      const saved = makeTask({ assigneeId: dev.id, status: TaskStatus.TODO });
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+      mockTasksRepository.save.mockResolvedValue(saved);
+
+      const result = await service.updateStatus('task-uuid-1', dto, dev);
+
+      expect(result.status).toBe(TaskStatus.TODO);
     });
   });
 
@@ -359,6 +459,15 @@ describe('TasksService', () => {
       mockTasksRepository.findOne.mockResolvedValue(null);
 
       await expect(service.softCancel('nonexistent')).rejects.toThrow(NotFoundException);
+    });
+
+    it('lanza BadRequestException (400) al intentar cancelar una tarea done', async () => {
+      const task = makeTask({ status: TaskStatus.DONE });
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+
+      await expect(service.softCancel('task-uuid-1')).rejects.toThrow(BadRequestException);
+      expect(mockTasksRepository.save).not.toHaveBeenCalled();
     });
   });
 });
