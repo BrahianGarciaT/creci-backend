@@ -7,6 +7,7 @@ import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { validate } from './config/env.validation';
+import { DashboardModule } from './dashboard/dashboard.module';
 import { Project } from './projects/projects.entity';
 import { ProjectsModule } from './projects/projects.module';
 import { Task } from './tasks/tasks.entity';
@@ -34,6 +35,7 @@ import { UsersModule } from './users/users.module';
     AuthModule,
     ProjectsModule,
     TasksModule,
+    DashboardModule,
   ],
   controllers: [AppController],
   providers: [
