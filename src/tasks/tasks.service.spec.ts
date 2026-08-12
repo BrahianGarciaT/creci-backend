@@ -126,6 +126,7 @@ describe('TasksService', () => {
 
       expect(mockProjectsRepository.findOne).toHaveBeenCalledWith({
         where: { id: dto.projectId },
+        relations: { developers: true },
       });
       expect(mockTasksRepository.save).toHaveBeenCalled();
       expect(result.title).toBe('Nueva tarea');
@@ -158,6 +159,67 @@ describe('TasksService', () => {
       };
 
       await expect(service.create(dto, admin)).rejects.toThrow(NotFoundException);
+    });
+
+    it('lanza BadRequestException (400) cuando el assignee no pertenece al proyecto', async () => {
+      const admin = makeUser({ role: UserRole.ADMIN });
+      const outsider = makeUser({ id: 'outsider-id' });
+      mockUsersRepository.findOne.mockResolvedValue(outsider);
+      mockProjectsRepository.findOne.mockResolvedValue(
+        makeProject({ developers: [makeUser({ id: 'member-id' })] }),
+      );
+
+      const dto: CreateTaskDto = {
+        title: 'Tarea',
+        priority: TaskPriority.LOW,
+        projectId: 'proj-uuid-1',
+        assigneeId: 'outsider-id',
+      };
+
+      await expect(service.create(dto, admin)).rejects.toThrow(BadRequestException);
+      expect(mockTasksRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('crea la tarea cuando el assignee sí pertenece al proyecto', async () => {
+      const admin = makeUser({ role: UserRole.ADMIN });
+      const member = makeUser({ id: 'member-id' });
+      const task = makeTask({ assigneeId: 'member-id' });
+
+      mockUsersRepository.findOne.mockResolvedValue(member);
+      mockProjectsRepository.findOne.mockResolvedValue(makeProject({ developers: [member] }));
+      mockTasksRepository.create.mockReturnValue(task);
+      mockTasksRepository.save.mockResolvedValue(task);
+
+      const dto: CreateTaskDto = {
+        title: 'Tarea',
+        priority: TaskPriority.LOW,
+        projectId: 'proj-uuid-1',
+        assigneeId: 'member-id',
+      };
+
+      const result = await service.create(dto, admin);
+
+      expect(result.assigneeId).toBe('member-id');
+    });
+
+    it('crea la tarea sin asignar cuando assigneeId es omitido/null', async () => {
+      const admin = makeUser({ role: UserRole.ADMIN });
+      const task = makeTask({ assigneeId: null });
+
+      mockProjectsRepository.findOne.mockResolvedValue(makeProject({ developers: [] }));
+      mockTasksRepository.create.mockReturnValue(task);
+      mockTasksRepository.save.mockResolvedValue(task);
+
+      const dto: CreateTaskDto = {
+        title: 'Tarea',
+        priority: TaskPriority.LOW,
+        projectId: 'proj-uuid-1',
+      };
+
+      const result = await service.create(dto, admin);
+
+      expect(mockUsersRepository.findOne).not.toHaveBeenCalled();
+      expect(result.assigneeId).toBeNull();
     });
   });
 
@@ -350,6 +412,86 @@ describe('TasksService', () => {
 
       expect(result.status).toBe(TaskStatus.IN_PROGRESS);
       expect(result.completedAt).toBeNull();
+    });
+
+    it('lanza BadRequestException (400) cuando el nuevo assignee no pertenece al proyecto (solo assignee)', async () => {
+      const task = makeTask({ projectId: 'proj-uuid-1', assigneeId: null });
+      const dto: UpdateTaskDto = { assigneeId: 'outsider-id' };
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+      mockProjectsRepository.findOne.mockResolvedValue(
+        makeProject({ id: 'proj-uuid-1', developers: [makeUser({ id: 'member-id' })] }),
+      );
+
+      await expect(service.update('task-uuid-1', dto)).rejects.toThrow(BadRequestException);
+      expect(mockTasksRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('lanza BadRequestException (400) cuando cambia solo el proyecto y el assignee actual queda stale', async () => {
+      const task = makeTask({ projectId: 'proj-uuid-1', assigneeId: 'user-uuid-1' });
+      const dto: UpdateTaskDto = { projectId: 'proj-uuid-2' };
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+      mockProjectsRepository.findOne.mockResolvedValue(
+        makeProject({ id: 'proj-uuid-2', developers: [makeUser({ id: 'other-dev' })] }),
+      );
+
+      await expect(service.update('task-uuid-1', dto)).rejects.toThrow(BadRequestException);
+      expect(mockProjectsRepository.findOne).toHaveBeenCalledWith({
+        where: { id: 'proj-uuid-2' },
+        relations: { developers: true },
+      });
+      expect(mockTasksRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('valida contra el nuevo proyecto cuando projectId y assigneeId cambian juntos y tiene éxito', async () => {
+      const task = makeTask({ projectId: 'proj-uuid-1', assigneeId: 'user-uuid-1' });
+      const newDeveloper = makeUser({ id: 'dev-b' });
+      const dto: UpdateTaskDto = { projectId: 'proj-uuid-2', assigneeId: 'dev-b' };
+      const saved = makeTask({ projectId: 'proj-uuid-2', assigneeId: 'dev-b' });
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+      mockProjectsRepository.findOne.mockResolvedValue(
+        makeProject({ id: 'proj-uuid-2', developers: [newDeveloper] }),
+      );
+      mockTasksRepository.save.mockResolvedValue(saved);
+
+      const result = await service.update('task-uuid-1', dto);
+
+      expect(mockProjectsRepository.findOne).toHaveBeenCalledWith({
+        where: { id: 'proj-uuid-2' },
+        relations: { developers: true },
+      });
+      expect(result.projectId).toBe('proj-uuid-2');
+      expect(result.assigneeId).toBe('dev-b');
+    });
+
+    it('permite limpiar assigneeId a null en una tarea done', async () => {
+      const task = makeTask({ status: TaskStatus.DONE, assigneeId: 'user-uuid-1' });
+      const dto = { assigneeId: null } as unknown as UpdateTaskDto;
+      const saved = makeTask({ status: TaskStatus.DONE, assigneeId: null });
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+      mockProjectsRepository.findOne.mockResolvedValue(makeProject({ developers: [] }));
+      mockTasksRepository.save.mockResolvedValue(saved);
+
+      const result = await service.update('task-uuid-1', dto);
+
+      expect(result.assigneeId).toBeNull();
+    });
+
+    it('no valida membresía cuando projectId y assigneeId no cambian en un update parcial', async () => {
+      const task = makeTask({ projectId: 'proj-uuid-1', assigneeId: 'user-uuid-1' });
+      const dto: UpdateTaskDto = { title: 'Solo título' };
+      const saved = makeTask({ title: 'Solo título' });
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+      mockTasksRepository.save.mockResolvedValue(saved);
+
+      const result = await service.update('task-uuid-1', dto);
+
+      expect(mockProjectsRepository.findOne).not.toHaveBeenCalled();
+      expect(result.title).toBe('Solo título');
     });
   });
 

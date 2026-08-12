@@ -30,17 +30,14 @@ export class TasksService {
 
   // Crea una tarea; valida que el proyecto exista y opcionalmente carga el asignado
   async create(dto: CreateTaskDto, _adminUser: User): Promise<TaskResponseDto> {
-    const project = await this.projectsRepository.findOne({
-      where: { id: dto.projectId },
-    });
-    if (!project) throw new NotFoundException('Project not found');
-
     if (dto.assigneeId) {
       const assignee = await this.usersRepository.findOne({
         where: { id: dto.assigneeId },
       });
       if (!assignee) throw new NotFoundException('Assignee not found');
     }
+
+    await this.loadProjectAndAssertMembership(dto.projectId, dto.assigneeId ?? null);
 
     const task = this.tasksRepository.create({
       title: dto.title,
@@ -85,6 +82,24 @@ export class TasksService {
     return tasks.map(TaskResponseDto.from);
   }
 
+  // Carga el proyecto con sus developers y valida que el asignado (si hay) sea miembro
+  private async loadProjectAndAssertMembership(
+    projectId: string,
+    assigneeId: string | null,
+  ): Promise<Project> {
+    const project = await this.projectsRepository.findOne({
+      where: { id: projectId },
+      relations: { developers: true },
+    });
+    if (!project) throw new NotFoundException('Project not found');
+    if (assigneeId && !project.developers.some((d) => d.id === assigneeId)) {
+      throw new BadRequestException(
+        'El desarrollador asignado no pertenece al proyecto seleccionado',
+      );
+    }
+    return project;
+  }
+
   // Lanza BadRequestException si la transición de estado solicitada no está permitida
   // (una tarea done es terminal, salvo el no-op done -> done)
   private assertStatusTransitionAllowed(current: TaskStatus, next: TaskStatus): void {
@@ -111,6 +126,13 @@ export class TasksService {
 
     if (dto.status !== undefined) {
       this.assertStatusTransitionAllowed(task.status, dto.status);
+    }
+
+    if (dto.projectId !== undefined || dto.assigneeId !== undefined) {
+      const effectiveProjectId = dto.projectId ?? task.projectId;
+      const effectiveAssigneeId =
+        dto.assigneeId !== undefined ? (dto.assigneeId ?? null) : task.assigneeId;
+      await this.loadProjectAndAssertMembership(effectiveProjectId, effectiveAssigneeId);
     }
 
     if (dto.title !== undefined) task.title = dto.title;
