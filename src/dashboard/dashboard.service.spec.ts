@@ -1,5 +1,7 @@
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { ProjectAccessService } from '../projects/project-access.service';
 import { Project } from '../projects/projects.entity';
 import { Task, TaskStatus } from '../tasks/tasks.entity';
 import { User, UserRole } from '../users/users.entity';
@@ -64,6 +66,7 @@ describe('DashboardService', () => {
   let projectQb: ReturnType<typeof makeQueryBuilderMock>;
   let mockTasksRepository: any;
   let mockProjectsRepository: any;
+  let mockProjectAccessService: { assertCanRead: jest.Mock };
 
   beforeEach(async () => {
     taskQb = makeQueryBuilderMock();
@@ -74,9 +77,13 @@ describe('DashboardService', () => {
     };
     mockProjectsRepository = {
       find: jest.fn(),
+      findOne: jest.fn(),
       createQueryBuilder: jest.fn().mockReturnValue(projectQb),
     };
     const mockUsersRepository = {};
+    mockProjectAccessService = {
+      assertCanRead: jest.fn().mockResolvedValue(undefined),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -87,6 +94,10 @@ describe('DashboardService', () => {
           useValue: mockProjectsRepository,
         },
         { provide: getRepositoryToken(User), useValue: mockUsersRepository },
+        {
+          provide: ProjectAccessService,
+          useValue: mockProjectAccessService,
+        },
       ],
     }).compile();
 
@@ -342,6 +353,128 @@ describe('DashboardService', () => {
       expect(result.trend.points).toHaveLength(30);
       // ninguna query de tareas debe dispararse cuando no hay proyectos
       expect(mockTasksRepository.createQueryBuilder).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── GET /dashboard/projects/:id ──────────────────────────────────────────────
+
+  describe('getProjectDetail', () => {
+    it('llama a assertCanRead(id, user, { allowAdmin: true }) antes de consultar', async () => {
+      const admin = makeUser({ role: UserRole.ADMIN });
+      mockProjectsRepository.findOne.mockResolvedValue(
+        makeProject({ id: 'p1' }),
+      );
+      taskQb.getRawMany.mockResolvedValue([]);
+      taskQb.getMany.mockResolvedValue([]);
+      taskQb.getCount.mockResolvedValue(0);
+
+      await service.getProjectDetail('p1', admin);
+
+      expect(mockProjectAccessService.assertCanRead).toHaveBeenCalledWith(
+        'p1',
+        admin,
+        { allowAdmin: true },
+      );
+    });
+
+    it('propaga ForbiddenException de assertCanRead sin consultar tareas (developer no miembro)', async () => {
+      const dev = makeUser({ id: 'outsider' });
+      mockProjectAccessService.assertCanRead.mockRejectedValue(
+        new ForbiddenException('You are not a member of this project'),
+      );
+
+      await expect(service.getProjectDetail('p1', dev)).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(mockProjectsRepository.findOne).not.toHaveBeenCalled();
+      expect(mockTasksRepository.createQueryBuilder).not.toHaveBeenCalled();
+    });
+
+    it('lanza NotFoundException cuando el proyecto no existe', async () => {
+      const admin = makeUser({ role: UserRole.ADMIN });
+      mockProjectsRepository.findOne.mockResolvedValue(null);
+
+      await expect(service.getProjectDetail('missing', admin)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('proyecto sin tareas → counts en 0, trend vacío zero-filled, sin error', async () => {
+      const admin = makeUser({ role: UserRole.ADMIN });
+      mockProjectsRepository.findOne.mockResolvedValue(
+        makeProject({ id: 'p1', name: 'Empty Project' }),
+      );
+      taskQb.getRawMany.mockResolvedValue([]);
+      taskQb.getMany.mockResolvedValue([]);
+      taskQb.getCount.mockResolvedValue(0);
+
+      const result = await service.getProjectDetail('p1', admin);
+
+      expect(result).toEqual({
+        projectId: 'p1',
+        name: 'Empty Project',
+        total: 0,
+        counts: {
+          [TaskStatus.TODO]: 0,
+          [TaskStatus.IN_PROGRESS]: 0,
+          [TaskStatus.DONE]: 0,
+          [TaskStatus.CANCELLED]: 0,
+        },
+        workload: [],
+        overdue: [],
+        overdueCount: 0,
+        trend: expect.objectContaining({
+          granularity: 'day',
+          points: expect.any(Array),
+        }),
+      });
+      expect(result.trend.points).toHaveLength(30);
+      expect(result.trend.points.every((point) => point.count === 0)).toBe(
+        true,
+      );
+    });
+
+    it('proyecto sin tareas completadas → trend válido con puntos en 0 (no error)', async () => {
+      const admin = makeUser({ role: UserRole.ADMIN });
+      mockProjectsRepository.findOne.mockResolvedValue(
+        makeProject({ id: 'p1' }),
+      );
+      // getRawMany se comparte entre getStatusCountsByProject, getWorkload y
+      // getCompletionTrend (mismo query builder mock); encolar por orden de
+      // invocación evita que las filas de "counts" se cuelen en el shaping del trend
+      taskQb.getRawMany
+        .mockResolvedValueOnce([
+          { projectId: 'p1', status: TaskStatus.TODO, count: '3' },
+        ]) // counts
+        .mockResolvedValueOnce([]) // workload
+        .mockResolvedValueOnce([]); // trend
+      taskQb.getMany.mockResolvedValue([]);
+      taskQb.getCount.mockResolvedValue(0);
+
+      const result = await service.getProjectDetail('p1', admin);
+
+      expect(result.total).toBe(3);
+      expect(result.trend.points).toHaveLength(30);
+      expect(result.trend.points.every((point) => point.count === 0)).toBe(
+        true,
+      );
+    });
+
+    it('escopa las queries a un único projectId (no al resto de proyectos)', async () => {
+      const admin = makeUser({ role: UserRole.ADMIN });
+      mockProjectsRepository.findOne.mockResolvedValue(
+        makeProject({ id: 'p1' }),
+      );
+      taskQb.getRawMany.mockResolvedValue([]);
+      taskQb.getMany.mockResolvedValue([]);
+      taskQb.getCount.mockResolvedValue(0);
+
+      await service.getProjectDetail('p1', admin);
+
+      expect(taskQb.where).toHaveBeenCalledWith(
+        'task.projectId IN (:...projectIds)',
+        { projectIds: ['p1'] },
+      );
     });
   });
 });

@@ -1,8 +1,12 @@
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { User, UserRole } from '../users/users.entity';
 import { DashboardController } from './dashboard.controller';
 import { DashboardService } from './dashboard.service';
-import { DashboardOverviewDto } from './dto/dashboard-overview.dto';
+import {
+  DashboardOverviewDto,
+  ProjectDashboardDto,
+} from './dto/dashboard-overview.dto';
 
 // ── Helpers de fixture ─────────────────────────────────────────────────────────
 
@@ -39,10 +43,32 @@ function makeOverviewDto(
   };
 }
 
+function makeProjectDashboardDto(
+  overrides: Partial<ProjectDashboardDto> = {},
+): ProjectDashboardDto {
+  return {
+    projectId: 'proj-uuid-1',
+    name: 'Test Project',
+    total: 0,
+    counts: { todo: 0, in_progress: 0, done: 0, cancelled: 0 },
+    workload: [],
+    overdue: [],
+    overdueCount: 0,
+    trend: {
+      granularity: 'day',
+      from: '2024-01-01',
+      to: '2024-01-30',
+      points: [],
+    },
+    ...overrides,
+  };
+}
+
 // ── Mock del servicio ───────────────────────────────────────────────────────────
 
 const mockDashboardService = {
   getOverview: jest.fn(),
+  getProjectDetail: jest.fn(),
 };
 
 describe('DashboardController', () => {
@@ -87,6 +113,46 @@ describe('DashboardController', () => {
     });
   });
 
+  // ── GET /dashboard/projects/:id ─────────────────────────────────────────────
+
+  describe('getProjectDetail', () => {
+    it('llama a DashboardService.getProjectDetail con el id y el usuario actual', async () => {
+      const admin = makeUser({ role: UserRole.ADMIN });
+      const dto = makeProjectDashboardDto({ projectId: 'p1' });
+      mockDashboardService.getProjectDetail.mockResolvedValue(dto);
+
+      const result = await controller.getProjectDetail('p1', admin);
+
+      expect(mockDashboardService.getProjectDetail).toHaveBeenCalledWith(
+        'p1',
+        admin,
+      );
+      expect(result.projectId).toBe('p1');
+    });
+
+    it('propaga ForbiddenException lanzada por el servicio (developer no miembro)', async () => {
+      const dev = makeUser();
+      mockDashboardService.getProjectDetail.mockRejectedValue(
+        new ForbiddenException('You are not a member of this project'),
+      );
+
+      await expect(controller.getProjectDetail('p1', dev)).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it('propaga NotFoundException lanzada por el servicio (proyecto inexistente)', async () => {
+      const admin = makeUser({ role: UserRole.ADMIN });
+      mockDashboardService.getProjectDetail.mockRejectedValue(
+        new NotFoundException('Project not found'),
+      );
+
+      await expect(
+        controller.getProjectDetail('missing', admin),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
   // ── Metadatos de guards ──────────────────────────────────────────────────────
 
   describe('sin @Roles', () => {
@@ -94,6 +160,14 @@ describe('DashboardController', () => {
       const roles: UserRole[] | undefined = Reflect.getMetadata(
         'roles',
         controller.getOverview,
+      );
+      expect(roles).toBeUndefined();
+    });
+
+    it('el handler getProjectDetail no tiene @Roles (JWT-only, assertCanRead en el servicio)', () => {
+      const roles: UserRole[] | undefined = Reflect.getMetadata(
+        'roles',
+        controller.getProjectDetail,
       );
       expect(roles).toBeUndefined();
     });
