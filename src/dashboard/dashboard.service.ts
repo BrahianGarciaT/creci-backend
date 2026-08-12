@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { ProjectAccessService } from '../projects/project-access.service';
 import { Project } from '../projects/projects.entity';
 import { Task, TaskStatus } from '../tasks/tasks.entity';
 import { User, UserRole } from '../users/users.entity';
@@ -8,6 +9,7 @@ import {
   CompletionTrend,
   DashboardOverviewDto,
   OverdueEntry,
+  ProjectDashboardDto,
   ProjectHealth,
   StatusCounts,
   TrendPoint,
@@ -26,6 +28,7 @@ export class DashboardService {
     private readonly projectsRepository: Repository<Project>,
     @InjectRepository(User)
     private readonly usersRepository: Repository<User>,
+    private readonly projectAccessService: ProjectAccessService,
   ) {}
 
   // GET /dashboard/overview — ADMIN ve todos los proyectos de la organización;
@@ -69,6 +72,48 @@ export class DashboardService {
     return {
       scope,
       projects: this.buildProjectHealth(projects, countsByProject),
+      workload,
+      overdue: overdueResult.overdue,
+      overdueCount: overdueResult.overdueCount,
+      trend,
+    };
+  }
+
+  // GET /dashboard/projects/:id — reutiliza los mismos helpers de shaping que
+  // getOverview, parametrizados a un único projectId en vez de la lista de
+  // proyectos org-wide/participant. assertCanRead corre primero (404/403).
+  async getProjectDetail(
+    projectId: string,
+    currentUser: User,
+  ): Promise<ProjectDashboardDto> {
+    await this.projectAccessService.assertCanRead(projectId, currentUser, {
+      allowAdmin: true,
+    });
+
+    const project = await this.projectsRepository.findOne({
+      where: { id: projectId },
+    });
+    if (!project) throw new NotFoundException('Project not found');
+
+    const projectIds = [projectId];
+
+    const [countsByProject, workload, overdueResult, trend] = await Promise.all(
+      [
+        this.getStatusCountsByProject(projectIds),
+        this.getWorkload(projectIds),
+        this.getOverdue(projectIds),
+        this.getCompletionTrend(projectIds),
+      ],
+    );
+
+    const counts = countsByProject.get(projectId) ?? this.emptyStatusCounts();
+    const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
+
+    return {
+      projectId: project.id,
+      name: project.name,
+      total,
+      counts,
       workload,
       overdue: overdueResult.overdue,
       overdueCount: overdueResult.overdueCount,

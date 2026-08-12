@@ -50,3 +50,16 @@ export interface DashboardOverviewDto {
   overdueCount: number;
   trend: CompletionTrend;
 }
+
+// GET /dashboard/projects/:id — mismos widgets que DashboardOverviewDto pero
+// acotados a un único proyecto (sin `scope`, con `projectId`/`name`/`total`)
+export interface ProjectDashboardDto {
+  projectId: string;
+  name: string;
+  total: number;
+  counts: StatusCounts;
+  workload: WorkloadEntry[];
+  overdue: OverdueEntry[];
+  overdueCount: number;
+  trend: CompletionTrend;
+}
