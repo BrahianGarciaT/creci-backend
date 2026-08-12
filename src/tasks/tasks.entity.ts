@@ -18,6 +18,12 @@ export enum TaskStatus {
   CANCELLED = 'cancelled',
 }
 
+// `done` es un estado terminal: una vez alcanzado, ninguna transición hacia otro
+// estado está permitida excepto el no-op done -> done (idempotente).
+export function isStatusTransitionAllowed(current: TaskStatus, next: TaskStatus): boolean {
+  return current !== TaskStatus.DONE || next === TaskStatus.DONE;
+}
+
 // Prioridad de la tarea; usada para ordenar y filtrar en el frontend
 export enum TaskPriority {
   HIGH = 'high',

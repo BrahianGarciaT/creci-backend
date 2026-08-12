@@ -13,7 +13,7 @@ import { TaskResponseDto } from './dto/task-response.dto';
 import { UpdateEstimateDto } from './dto/update-estimate.dto';
 import { UpdateStatusDto } from './dto/update-status.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
-import { Task, TaskStatus } from './tasks.entity';
+import { isStatusTransitionAllowed, Task, TaskStatus } from './tasks.entity';
 
 @Injectable()
 export class TasksService {
@@ -87,10 +87,24 @@ export class TasksService {
     return tasks.map(TaskResponseDto.from);
   }
 
+  // Lanza BadRequestException si la transición de estado solicitada no está permitida
+  // (una tarea done es terminal, salvo el no-op done -> done)
+  private assertStatusTransitionAllowed(current: TaskStatus, next: TaskStatus): void {
+    if (!isStatusTransitionAllowed(current, next)) {
+      throw new BadRequestException(
+        'A completed task cannot change status. Create a new task instead.',
+      );
+    }
+  }
+
   // Actualización parcial completa de una tarea (solo admin)
   async update(id: string, dto: UpdateTaskDto): Promise<TaskResponseDto> {
     const task = await this.tasksRepository.findOne({ where: { id } });
     if (!task) throw new NotFoundException('Task not found');
+
+    if (dto.status !== undefined) {
+      this.assertStatusTransitionAllowed(task.status, dto.status);
+    }
 
     if (dto.title !== undefined) task.title = dto.title;
     if (dto.description !== undefined) task.description = dto.description ?? null;
@@ -117,6 +131,8 @@ export class TasksService {
     if ((dto.status as string) === TaskStatus.CANCELLED) {
       throw new BadRequestException('Cannot set status to cancelled via this endpoint');
     }
+
+    this.assertStatusTransitionAllowed(task.status, dto.status as TaskStatus);
 
     task.status = dto.status as TaskStatus;
     const saved = await this.tasksRepository.save(task);
@@ -145,6 +161,8 @@ export class TasksService {
   async softCancel(id: string): Promise<TaskResponseDto> {
     const task = await this.tasksRepository.findOne({ where: { id } });
     if (!task) throw new NotFoundException('Task not found');
+
+    this.assertStatusTransitionAllowed(task.status, TaskStatus.CANCELLED);
 
     task.status = TaskStatus.CANCELLED;
     const saved = await this.tasksRepository.save(task);
