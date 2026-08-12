@@ -8,8 +8,10 @@ import {
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
+import { In, Not } from 'typeorm';
 import { JwtStrategy } from '../auth/jwt.strategy';
 import { Project, ProjectStatus } from '../projects/projects.entity';
+import { Task, TaskStatus } from '../tasks/tasks.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UserResponseDto } from './dto/user-response.dto';
@@ -331,6 +333,58 @@ describe('UsersService', () => {
 
       expect(mockManager.save).not.toHaveBeenCalled();
     });
+
+    it('cascada de tareas: desactivar un developer con proyectos limpia el assigneeId de sus tareas no-done, atómicamente', async () => {
+      const target = makeUser({ id: 'uuid-1', isActive: true });
+      const project = makeProject({ id: 'proj-1', developers: [target] });
+      const reloaded = makeUser({ id: 'uuid-1', isActive: false });
+      mockRepository.findOne.mockResolvedValueOnce(target).mockResolvedValueOnce(reloaded);
+      mockQueryBuilder.getMany.mockResolvedValue([project]);
+      mockManager.save.mockResolvedValue([project]);
+
+      await service.deactivate('uuid-1', adminActor);
+
+      expect(mockManager.update).toHaveBeenCalledWith(
+        Task,
+        {
+          projectId: In(['proj-1']),
+          assigneeId: In(['uuid-1']),
+          status: Not(TaskStatus.DONE),
+        },
+        { assigneeId: null },
+      );
+      // Debe ejecutarse dentro de la misma transacción que el update de User
+      expect(mockManager.update).toHaveBeenCalledWith(User, 'uuid-1', { isActive: false });
+    });
+
+    it('desactivar un developer sin proyectos asignados no dispara la cascada de tareas', async () => {
+      const target = makeUser({ id: 'uuid-1', isActive: true });
+      const reloaded = makeUser({ id: 'uuid-1', isActive: false });
+      mockRepository.findOne.mockResolvedValueOnce(target).mockResolvedValueOnce(reloaded);
+      mockQueryBuilder.getMany.mockResolvedValue([]);
+
+      await service.deactivate('uuid-1', adminActor);
+
+      expect(mockManager.update).not.toHaveBeenCalledWith(
+        Task,
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it('reactivar un usuario previamente desactivado no restaura ninguna asignación previamente limpiada', async () => {
+      const inactiveUser = makeUser({ id: 'uuid-1', isActive: false, projects: [] });
+      const reloaded = makeUser({ id: 'uuid-1', isActive: true, projects: [] });
+      mockRepository.findOne.mockResolvedValueOnce(inactiveUser).mockResolvedValueOnce(reloaded);
+      mockRepository.update.mockResolvedValue({ affected: 1 });
+
+      const result = await service.reactivate('uuid-1');
+
+      // reactivate() solo toca User.isActive; nunca invoca la transacción/cascada
+      expect(mockRepository.manager.transaction).not.toHaveBeenCalled();
+      expect(mockManager.update).not.toHaveBeenCalled();
+      expect(result.projects).toEqual([]);
+    });
   });
 
   // ── update ──────────────────────────────────────────────────────────────────
@@ -409,6 +463,55 @@ describe('UsersService', () => {
         'target.id = :userId',
         { userId: 'uuid-1' },
       );
+    });
+
+    it('demover a un developer con tareas no-done asignadas limpia membresía Y assigneeId atómicamente', async () => {
+      const target = makeUser({ id: 'uuid-1', role: UserRole.DEVELOPER });
+      const project = makeProject({ id: 'proj-1', developers: [target] });
+      const reloaded = makeUser({ id: 'uuid-1', role: UserRole.ADMIN, projects: [] });
+      mockRepository.findOne.mockResolvedValueOnce(target).mockResolvedValueOnce(reloaded);
+      mockQueryBuilder.getMany.mockResolvedValue([project]);
+      mockManager.save.mockResolvedValue([project]);
+
+      await service.update('uuid-1', { role: UserRole.ADMIN });
+
+      expect(mockManager.update).toHaveBeenCalledWith(
+        Task,
+        {
+          projectId: In(['proj-1']),
+          assigneeId: In(['uuid-1']),
+          status: Not(TaskStatus.DONE),
+        },
+        { assigneeId: null },
+      );
+      expect(mockManager.update).toHaveBeenCalledWith(User, 'uuid-1', { role: UserRole.ADMIN });
+    });
+
+    it('demover a un developer con solo tareas done preserva el assigneeId (cascada no-op, la escritura Task nunca se llama)', async () => {
+      const target = makeUser({ id: 'uuid-1', role: UserRole.DEVELOPER });
+      const project = makeProject({ id: 'proj-1', developers: [target] });
+      const reloaded = makeUser({ id: 'uuid-1', role: UserRole.ADMIN, projects: [] });
+      mockRepository.findOne.mockResolvedValueOnce(target).mockResolvedValueOnce(reloaded);
+      mockQueryBuilder.getMany.mockResolvedValue([project]);
+      mockManager.save.mockResolvedValue([project]);
+
+      await service.update('uuid-1', { role: UserRole.ADMIN });
+
+      // clearAssigneeForRemovedDevelopers siempre excluye status DONE en su UPDATE;
+      // no hay forma de que una tarea done sea alcanzada por este criterio.
+      const taskUpdateCall = mockManager.update.mock.calls.find((call) => call[0] === Task);
+      expect(taskUpdateCall?.[1]).toMatchObject({ status: Not(TaskStatus.DONE) });
+    });
+
+    it('cambio de role que NO se aleja de DEVELOPER omite la cascada por completo', async () => {
+      const target = makeUser({ id: 'uuid-1', role: UserRole.DEVELOPER });
+      const reloaded = makeUser({ id: 'uuid-1', role: UserRole.DEVELOPER, projects: [] });
+      mockRepository.findOne.mockResolvedValueOnce(target).mockResolvedValueOnce(reloaded);
+
+      await service.update('uuid-1', { role: UserRole.DEVELOPER });
+
+      expect(mockManager.createQueryBuilder).not.toHaveBeenCalled();
+      expect(mockManager.update).not.toHaveBeenCalledWith(Task, expect.anything(), expect.anything());
     });
 
     it('role sin cambios (developer -> developer) no dispara cascada', async () => {

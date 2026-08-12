@@ -1,6 +1,8 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { In, Not } from 'typeorm';
+import { Task, TaskStatus } from '../tasks/tasks.entity';
 import { User, UserRole } from '../users/users.entity';
 import { AssignDevelopersDto } from './dto/assign-developers.dto';
 import { CreateProjectDto } from './dto/create-project.dto';
@@ -40,11 +42,19 @@ function makeUser(overrides: Partial<User> = {}): User {
 
 // ── Mocks de repositorios ───────────────────────────────────────────────────────
 
+const mockManager = {
+  save: jest.fn(),
+  update: jest.fn(),
+};
+
 const mockProjectsRepository = {
   find: jest.fn(),
   findOne: jest.fn(),
   create: jest.fn(),
   save: jest.fn(),
+  manager: {
+    transaction: jest.fn((cb: (manager: typeof mockManager) => unknown) => cb(mockManager)),
+  },
 };
 
 const mockUsersRepository = {
@@ -266,6 +276,120 @@ describe('ProjectsService', () => {
       const dto: AssignDevelopersDto = { developerIds: [] };
 
       await expect(service.assignDevelopers('nonexistent', dto)).rejects.toThrow(NotFoundException);
+    });
+
+    // ── cascada de assigneeId al remover developers ────────────────────────────
+
+    it('remueve un developer: limpia el assigneeId de sus tareas no-done en el mismo proyecto, atómicamente', async () => {
+      const removedDev = makeUser({ id: 'user-removed' });
+      const keptDev = makeUser({ id: 'user-kept', email: 'kept@example.com' });
+      const project = makeProject({ developers: [removedDev, keptDev] });
+      const withRelations = makeProject({ developers: [keptDev] });
+
+      mockProjectsRepository.findOne
+        .mockResolvedValueOnce(project)
+        .mockResolvedValueOnce(withRelations);
+      mockUsersRepository.find.mockResolvedValue([keptDev]);
+      mockManager.save.mockResolvedValue(project);
+      mockManager.update.mockResolvedValue({ affected: 1 });
+
+      const dto: AssignDevelopersDto = { developerIds: ['user-kept'] };
+      await service.assignDevelopers('proj-uuid-1', dto);
+
+      expect(mockProjectsRepository.manager.transaction).toHaveBeenCalledTimes(1);
+      expect(mockManager.save).toHaveBeenCalledTimes(1);
+      expect(mockManager.update).toHaveBeenCalledWith(
+        Task,
+        {
+          projectId: In(['proj-uuid-1']),
+          assigneeId: In(['user-removed']),
+          status: Not(TaskStatus.DONE),
+        },
+        { assigneeId: null },
+      );
+    });
+
+    it('excluye tareas done: la cascada sigue invocándose pero con criterio Not(DONE)', async () => {
+      const removedDev = makeUser({ id: 'user-removed' });
+      const project = makeProject({ developers: [removedDev] });
+      const withRelations = makeProject({ developers: [] });
+
+      mockProjectsRepository.findOne
+        .mockResolvedValueOnce(project)
+        .mockResolvedValueOnce(withRelations);
+      mockManager.save.mockResolvedValue(project);
+      mockManager.update.mockResolvedValue({ affected: 0 });
+
+      const dto: AssignDevelopersDto = { developerIds: [] };
+      await service.assignDevelopers('proj-uuid-1', dto);
+
+      expect(mockManager.update).toHaveBeenCalledWith(
+        Task,
+        expect.objectContaining({ status: Not(TaskStatus.DONE) }),
+        { assigneeId: null },
+      );
+    });
+
+    it('scoping: la cascada solo afecta al proyecto sobre el que se llamó assignDevelopers', async () => {
+      const removedDev = makeUser({ id: 'user-removed' });
+      const project = makeProject({ id: 'proj-scoped', developers: [removedDev] });
+      const withRelations = makeProject({ id: 'proj-scoped', developers: [] });
+
+      mockProjectsRepository.findOne
+        .mockResolvedValueOnce(project)
+        .mockResolvedValueOnce(withRelations);
+      mockManager.save.mockResolvedValue(project);
+      mockManager.update.mockResolvedValue({ affected: 1 });
+
+      const dto: AssignDevelopersDto = { developerIds: [] };
+      await service.assignDevelopers('proj-scoped', dto);
+
+      expect(mockManager.update).toHaveBeenCalledWith(
+        Task,
+        expect.objectContaining({ projectId: In(['proj-scoped']) }),
+        { assigneeId: null },
+      );
+    });
+
+    it('rollback: si manager.save falla, no se persiste ningún cambio (transacción completa se revierte)', async () => {
+      const removedDev = makeUser({ id: 'user-removed' });
+      const project = makeProject({ developers: [removedDev] });
+
+      mockProjectsRepository.findOne.mockResolvedValueOnce(project);
+      mockManager.save.mockRejectedValue(new Error('DB write failed'));
+
+      const dto: AssignDevelopersDto = { developerIds: [] };
+
+      await expect(service.assignDevelopers('proj-uuid-1', dto)).rejects.toThrow('DB write failed');
+      // El fallo dentro de manager.save ocurre antes de la cascada: update no debe llamarse
+      expect(mockManager.update).not.toHaveBeenCalled();
+    });
+
+    it('developerIds vacío (early-return branch): también dispara la cascada transaccional', async () => {
+      const removedDev1 = makeUser({ id: 'user-removed-1' });
+      const removedDev2 = makeUser({ id: 'user-removed-2', email: 'r2@example.com' });
+      const project = makeProject({ developers: [removedDev1, removedDev2] });
+      const withRelations = makeProject({ developers: [] });
+
+      mockProjectsRepository.findOne
+        .mockResolvedValueOnce(project)
+        .mockResolvedValueOnce(withRelations);
+      mockManager.save.mockResolvedValue(project);
+      mockManager.update.mockResolvedValue({ affected: 2 });
+
+      const dto: AssignDevelopersDto = { developerIds: [] };
+      await service.assignDevelopers('proj-uuid-1', dto);
+
+      // No debe consultar usersRepository en la rama de vaciado
+      expect(mockUsersRepository.find).not.toHaveBeenCalled();
+      expect(mockProjectsRepository.manager.transaction).toHaveBeenCalledTimes(1);
+      expect(mockManager.update).toHaveBeenCalledWith(
+        Task,
+        expect.objectContaining({
+          assigneeId: In(['user-removed-1', 'user-removed-2']),
+        }),
+        { assigneeId: null },
+      );
     });
   });
 });
