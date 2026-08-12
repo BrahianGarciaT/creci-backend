@@ -10,6 +10,7 @@ import * as bcrypt from 'bcrypt';
 import { EntityManager, Repository } from 'typeorm';
 import { Project } from '../projects/projects.entity';
 import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 import { UserResponseDto } from './dto/user-response.dto';
 import { User, UserRole } from './users.entity';
 
@@ -126,6 +127,42 @@ export class UsersService {
     await this.usersRepository.manager.transaction(async (manager) => {
       await this.removeAllProjectAssignments(manager, id);
       await manager.update(User, id, { isActive: false });
+    });
+
+    const updated = await this.usersRepository.findOne({
+      where: { id },
+      relations: { projects: true },
+    });
+    return UserResponseDto.from(updated!);
+  }
+
+  // Actualiza role y/o password. `email` e `isActive` no son parte de UpdateUserDto,
+  // por lo que nunca se modifican aquí. Si el role cambia hacia afuera de DEVELOPER,
+  // remueve las asignaciones de proyecto (mismo helper/transacción que deactivate()).
+  // Si se envía password, se rehashea y refreshToken se pone en null (invalida
+  // sesión) — solo cuando password fue efectivamente enviado.
+  async update(id: string, dto: UpdateUserDto): Promise<UserResponseDto> {
+    const target = await this.findById(id);
+    if (!target) throw new NotFoundException('User not found');
+
+    await this.usersRepository.manager.transaction(async (manager) => {
+      const changes: Partial<User> = {};
+
+      if (dto.role !== undefined) {
+        changes.role = dto.role;
+        if (dto.role !== UserRole.DEVELOPER) {
+          await this.removeAllProjectAssignments(manager, id);
+        }
+      }
+
+      if (dto.password !== undefined) {
+        changes.password = await bcrypt.hash(dto.password, BCRYPT_SALT_ROUNDS);
+        changes.refreshToken = null;
+      }
+
+      if (Object.keys(changes).length > 0) {
+        await manager.update(User, id, changes);
+      }
     });
 
     const updated = await this.usersRepository.findOne({

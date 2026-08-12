@@ -11,6 +11,7 @@ import * as bcrypt from 'bcrypt';
 import { JwtStrategy } from '../auth/jwt.strategy';
 import { Project, ProjectStatus } from '../projects/projects.entity';
 import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 import { UserResponseDto } from './dto/user-response.dto';
 import { User, UserRole } from './users.entity';
 import { UsersService } from './users.service';
@@ -329,6 +330,116 @@ describe('UsersService', () => {
       await service.deactivate('uuid-1', adminActor);
 
       expect(mockManager.save).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── update ──────────────────────────────────────────────────────────────────
+
+  describe('update', () => {
+    it('lanza NotFoundException (404) si el id no existe', async () => {
+      mockRepository.findOne.mockResolvedValue(null);
+
+      await expect(service.update('nonexistent', { role: UserRole.ADMIN })).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('aplica solo los campos definidos: role-only deja password y refreshToken intactos', async () => {
+      const target = makeUser({ id: 'uuid-1', role: UserRole.DEVELOPER });
+      const reloaded = makeUser({ id: 'uuid-1', role: UserRole.ADMIN, projects: [] });
+      mockRepository.findOne.mockResolvedValueOnce(target).mockResolvedValueOnce(reloaded);
+      mockQueryBuilder.getMany.mockResolvedValue([]);
+
+      const dto: UpdateUserDto = { role: UserRole.ADMIN };
+      const result = await service.update('uuid-1', dto);
+
+      expect(mockManager.update).toHaveBeenCalledWith(User, 'uuid-1', { role: UserRole.ADMIN });
+      expect(result.role).toBe(UserRole.ADMIN);
+    });
+
+    it('cuerpo vacío: no llama a manager.update (no-op) y devuelve el usuario sin cambios', async () => {
+      const target = makeUser({ id: 'uuid-1' });
+      const reloaded = makeUser({ id: 'uuid-1', projects: [] });
+      mockRepository.findOne.mockResolvedValueOnce(target).mockResolvedValueOnce(reloaded);
+
+      await service.update('uuid-1', {});
+
+      expect(mockManager.update).not.toHaveBeenCalled();
+    });
+
+    it('password provisto: se hashea con bcrypt y refreshToken se pone en null', async () => {
+      const target = makeUser({ id: 'uuid-1', refreshToken: 'old-token' });
+      const reloaded = makeUser({ id: 'uuid-1', projects: [] });
+      mockRepository.findOne.mockResolvedValueOnce(target).mockResolvedValueOnce(reloaded);
+
+      await service.update('uuid-1', { password: 'newpass123' });
+
+      expect(mockManager.update).toHaveBeenCalledTimes(1);
+      const [, , changes] = mockManager.update.mock.calls[0] as [unknown, unknown, Partial<User>];
+      expect(changes.refreshToken).toBeNull();
+      expect(changes.password).toMatch(/^\$2[ab]\$/);
+      const isMatch = await bcrypt.compare('newpass123', changes.password as string);
+      expect(isMatch).toBe(true);
+    });
+
+    it('password omitido: refreshToken no se modifica', async () => {
+      const target = makeUser({ id: 'uuid-1', refreshToken: 'old-token' });
+      const reloaded = makeUser({ id: 'uuid-1', projects: [] });
+      mockRepository.findOne.mockResolvedValueOnce(target).mockResolvedValueOnce(reloaded);
+      mockQueryBuilder.getMany.mockResolvedValue([]);
+
+      await service.update('uuid-1', { role: UserRole.ADMIN });
+
+      const [, , changes] = mockManager.update.mock.calls[0] as [unknown, unknown, Partial<User>];
+      expect(changes).not.toHaveProperty('refreshToken');
+    });
+
+    it('cambio de role away from DEVELOPER llama a removeAllProjectAssignments (cascada)', async () => {
+      const target = makeUser({ id: 'uuid-1', role: UserRole.DEVELOPER });
+      const reloaded = makeUser({ id: 'uuid-1', role: UserRole.ADMIN, projects: [] });
+      mockRepository.findOne.mockResolvedValueOnce(target).mockResolvedValueOnce(reloaded);
+      mockQueryBuilder.getMany.mockResolvedValue([]);
+
+      await service.update('uuid-1', { role: UserRole.ADMIN });
+
+      expect(mockManager.createQueryBuilder).toHaveBeenCalledWith(Project, 'project');
+      expect(mockQueryBuilder.innerJoin).toHaveBeenCalledWith(
+        'project.developers',
+        'target',
+        'target.id = :userId',
+        { userId: 'uuid-1' },
+      );
+    });
+
+    it('role sin cambios (developer -> developer) no dispara cascada', async () => {
+      const target = makeUser({ id: 'uuid-1', role: UserRole.DEVELOPER });
+      const reloaded = makeUser({ id: 'uuid-1', role: UserRole.DEVELOPER, projects: [] });
+      mockRepository.findOne.mockResolvedValueOnce(target).mockResolvedValueOnce(reloaded);
+
+      await service.update('uuid-1', { role: UserRole.DEVELOPER });
+
+      expect(mockManager.createQueryBuilder).not.toHaveBeenCalled();
+    });
+
+    it('promoción a developer no dispara cascada', async () => {
+      const target = makeUser({ id: 'uuid-1', role: UserRole.ADMIN });
+      const reloaded = makeUser({ id: 'uuid-1', role: UserRole.DEVELOPER, projects: [] });
+      mockRepository.findOne.mockResolvedValueOnce(target).mockResolvedValueOnce(reloaded);
+
+      await service.update('uuid-1', { role: UserRole.DEVELOPER });
+
+      expect(mockManager.createQueryBuilder).not.toHaveBeenCalled();
+    });
+
+    it('la respuesta nunca incluye password ni refreshToken', async () => {
+      const target = makeUser({ id: 'uuid-1' });
+      const reloaded = makeUser({ id: 'uuid-1', projects: [] });
+      mockRepository.findOne.mockResolvedValueOnce(target).mockResolvedValueOnce(reloaded);
+
+      const result = await service.update('uuid-1', { role: UserRole.ADMIN });
+
+      expect(result).not.toHaveProperty('password');
+      expect(result).not.toHaveProperty('refreshToken');
     });
   });
 
