@@ -59,9 +59,12 @@ export class UsersService {
     }
   }
 
-  // Devuelve todos los usuarios mapeados al DTO seguro (sin password ni refreshToken)
+  // Devuelve todos los usuarios mapeados al DTO seguro (sin password ni refreshToken).
+  // Orden explícito por createdAt: sin ORDER BY, Postgres no garantiza orden
+  // estable y un UPDATE (ej. deactivate/reactivate) puede reubicar la fila
+  // (MVCC) — mismo bug ya corregido en tasks.service.ts.
   async findAll(): Promise<UserResponseDto[]> {
-    const users = await this.usersRepository.find();
+    const users = await this.usersRepository.find({ order: { createdAt: 'ASC' } });
     return users.map(UserResponseDto.from);
   }
 

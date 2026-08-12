@@ -85,7 +85,10 @@ describe('ProjectsService', () => {
 
       const result = await service.findAll();
 
-      expect(mockProjectsRepository.find).toHaveBeenCalledWith({ relations: { developers: true } });
+      expect(mockProjectsRepository.find).toHaveBeenCalledWith({
+        relations: { developers: true },
+        order: { createdAt: 'ASC' },
+      });
       expect(result).toHaveLength(2);
       expect(result[0].id).toBe('proj-uuid-1');
     });

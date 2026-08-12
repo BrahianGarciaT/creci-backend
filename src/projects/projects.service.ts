@@ -22,13 +22,17 @@ export class ProjectsService {
     private readonly usersRepository: Repository<User>,
   ) {}
 
-  // Devuelve los proyectos donde el usuario autenticado es developer
+  // Devuelve los proyectos donde el usuario autenticado es developer.
+  // Orden explícito por createdAt: sin ORDER BY, Postgres no garantiza orden
+  // estable y un UPDATE puede reubicar la fila (MVCC) — mismo bug ya
+  // corregido en tasks.service.ts.
   async findMine(userId: string): Promise<ProjectResponseDto[]> {
     const projects = await this.projectsRepository
       .createQueryBuilder('project')
       .innerJoin('project.developers', 'dev', 'dev.id = :userId', { userId })
       .leftJoinAndSelect('project.developers', 'developer')
       .where('project.status = :status', { status: ProjectStatus.ACTIVE })
+      .orderBy('project.createdAt', 'ASC')
       .getMany();
     return projects.map(ProjectResponseDto.from);
   }
@@ -37,6 +41,7 @@ export class ProjectsService {
   async findAll(): Promise<ProjectResponseDto[]> {
     const projects = await this.projectsRepository.find({
       relations: { developers: true },
+      order: { createdAt: 'ASC' },
     });
     return projects.map(ProjectResponseDto.from);
   }

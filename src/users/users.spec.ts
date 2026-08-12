@@ -163,6 +163,7 @@ describe('UsersService', () => {
 
       const result = await service.findAll();
 
+      expect(mockRepository.find).toHaveBeenCalledWith({ order: { createdAt: 'ASC' } });
       expect(result).toHaveLength(2);
       result.forEach((dto) => {
         expect(dto).toBeInstanceOf(UserResponseDto);
