@@ -358,18 +358,14 @@ describe('TasksService', () => {
       expect(result.status).toBe(TaskStatus.DONE);
     });
 
-    it('permite editar campos no relacionados con status en una tarea done', async () => {
+    it('lanza BadRequestException (400) al intentar editar cualquier campo de una tarea done', async () => {
       const task = makeTask({ status: TaskStatus.DONE });
       const dto: UpdateTaskDto = { title: 'Nuevo título' };
-      const saved = makeTask({ status: TaskStatus.DONE, title: 'Nuevo título' });
 
       mockTasksRepository.findOne.mockResolvedValue(task);
-      mockTasksRepository.save.mockResolvedValue(saved);
 
-      const result = await service.update('task-uuid-1', dto);
-
-      expect(result.title).toBe('Nuevo título');
-      expect(result.status).toBe(TaskStatus.DONE);
+      await expect(service.update('task-uuid-1', dto)).rejects.toThrow(BadRequestException);
+      expect(mockTasksRepository.save).not.toHaveBeenCalled();
     });
 
     it('permite reabrir una tarea cancelled (no es terminal)', async () => {
@@ -466,18 +462,14 @@ describe('TasksService', () => {
       expect(result.assigneeId).toBe('dev-b');
     });
 
-    it('permite limpiar assigneeId a null en una tarea done', async () => {
+    it('lanza BadRequestException (400) al intentar limpiar assigneeId en una tarea done', async () => {
       const task = makeTask({ status: TaskStatus.DONE, assigneeId: 'user-uuid-1' });
       const dto = { assigneeId: null } as unknown as UpdateTaskDto;
-      const saved = makeTask({ status: TaskStatus.DONE, assigneeId: null });
 
       mockTasksRepository.findOne.mockResolvedValue(task);
-      mockProjectsRepository.findOne.mockResolvedValue(makeProject({ developers: [] }));
-      mockTasksRepository.save.mockResolvedValue(saved);
 
-      const result = await service.update('task-uuid-1', dto);
-
-      expect(result.assigneeId).toBeNull();
+      await expect(service.update('task-uuid-1', dto)).rejects.toThrow(BadRequestException);
+      expect(mockTasksRepository.save).not.toHaveBeenCalled();
     });
 
     it('no valida membresía cuando projectId y assigneeId no cambian en un update parcial', async () => {
@@ -656,6 +648,17 @@ describe('TasksService', () => {
       await expect(service.updateEstimate('nonexistent', { estimatedHours: 4 }, dev)).rejects.toThrow(
         NotFoundException,
       );
+    });
+
+    it('lanza BadRequestException (400) al intentar actualizar la estimación de una tarea done', async () => {
+      const dev = makeUser();
+      const task = makeTask({ assigneeId: dev.id, status: TaskStatus.DONE });
+      const dto: UpdateEstimateDto = { estimatedHours: 4 };
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+
+      await expect(service.updateEstimate('task-uuid-1', dto, dev)).rejects.toThrow(BadRequestException);
+      expect(mockTasksRepository.save).not.toHaveBeenCalled();
     });
   });
 

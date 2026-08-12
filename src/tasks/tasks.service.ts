@@ -119,6 +119,28 @@ export class TasksService {
     }
   }
 
+  // Una tarea done es un registro histórico cerrado: ningún campo salvo el
+  // no-op de status (done -> done) puede modificarse. Lanza 400 si el dto
+  // trae algún otro campo mientras la tarea ya está done.
+  private assertTaskIsEditable(task: Task, dto: UpdateTaskDto): void {
+    if (task.status !== TaskStatus.DONE) return;
+
+    const hasNonStatusChanges =
+      dto.title !== undefined ||
+      dto.description !== undefined ||
+      dto.priority !== undefined ||
+      dto.dueDate !== undefined ||
+      dto.estimatedHours !== undefined ||
+      dto.projectId !== undefined ||
+      dto.assigneeId !== undefined;
+
+    if (hasNonStatusChanges) {
+      throw new BadRequestException(
+        'No se puede modificar una tarea completada. Crea una nueva tarea en su lugar.',
+      );
+    }
+  }
+
   // Actualización parcial completa de una tarea (solo admin)
   async update(id: string, dto: UpdateTaskDto): Promise<TaskResponseDto> {
     const task = await this.tasksRepository.findOne({ where: { id } });
@@ -127,6 +149,7 @@ export class TasksService {
     if (dto.status !== undefined) {
       this.assertStatusTransitionAllowed(task.status, dto.status);
     }
+    this.assertTaskIsEditable(task, dto);
 
     if (dto.projectId !== undefined || dto.assigneeId !== undefined) {
       const effectiveProjectId = dto.projectId ?? task.projectId;
@@ -183,6 +206,12 @@ export class TasksService {
 
     if (task.assigneeId !== currentUser.id) {
       throw new ForbiddenException('You are not the assignee of this task');
+    }
+
+    if (task.status === TaskStatus.DONE) {
+      throw new BadRequestException(
+        'No se puede modificar una tarea completada. Crea una nueva tarea en su lugar.',
+      );
     }
 
     task.estimatedHours = dto.estimatedHours;
