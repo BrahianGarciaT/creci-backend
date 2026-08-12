@@ -22,6 +22,7 @@ export class TaskResponseDto {
   dueDate: Date | null;
   // estimatedHours se coerciona a Number porque TypeORM devuelve string desde columna numeric
   estimatedHours: number | null;
+  completedAt: Date | null;
   projectId: string;
   project: ProjectSummary | null;
   assigneeId: string | null;
@@ -38,6 +39,7 @@ export class TaskResponseDto {
     dto.priority = task.priority;
     dto.dueDate = task.dueDate ?? null;
     dto.estimatedHours = task.estimatedHours != null ? Number(task.estimatedHours) : null;
+    dto.completedAt = task.completedAt ?? null;
     dto.projectId = task.projectId;
     dto.project = task.project ? { id: (task.project as Project).id, name: (task.project as Project).name } : null;
     dto.assigneeId = task.assigneeId ?? null;

@@ -6,6 +6,7 @@ import {
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Project } from '../projects/projects.entity';
+import { ProjectAccessService } from '../projects/project-access.service';
 import { User, UserRole } from '../users/users.entity';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateEstimateDto } from './dto/update-estimate.dto';
@@ -80,6 +81,10 @@ const mockUsersRepository = {
   findOne: jest.fn(),
 };
 
+const mockProjectAccessService = {
+  assertCanRead: jest.fn(),
+};
+
 // ── Suite principal ────────────────────────────────────────────────────────────
 
 describe('TasksService', () => {
@@ -92,6 +97,7 @@ describe('TasksService', () => {
         { provide: getRepositoryToken(Task), useValue: mockTasksRepository },
         { provide: getRepositoryToken(Project), useValue: mockProjectsRepository },
         { provide: getRepositoryToken(User), useValue: mockUsersRepository },
+        { provide: ProjectAccessService, useValue: mockProjectAccessService },
       ],
     }).compile();
 
@@ -188,39 +194,43 @@ describe('TasksService', () => {
   describe('findByProject', () => {
     it('devuelve tareas no canceladas cuando el usuario es miembro', async () => {
       const dev = makeUser();
-      const project = makeProject({ developers: [dev] });
       const tasks = [makeTask({ status: TaskStatus.IN_PROGRESS })];
 
-      mockProjectsRepository.findOne.mockResolvedValue(project);
+      mockProjectAccessService.assertCanRead.mockResolvedValue(undefined);
       mockTasksRepository.find.mockResolvedValue(tasks);
 
       const result = await service.findByProject('proj-uuid-1', dev);
 
+      expect(mockProjectAccessService.assertCanRead).toHaveBeenCalledWith('proj-uuid-1', dev, {
+        allowAdmin: false,
+      });
       expect(result).toHaveLength(1);
       expect(result[0].status).toBe(TaskStatus.IN_PROGRESS);
     });
 
     it('lanza ForbiddenException (403) cuando el usuario no es miembro del proyecto', async () => {
       const dev = makeUser({ id: 'outsider-id' });
-      const project = makeProject({ developers: [makeUser({ id: 'member-id' })] });
 
-      mockProjectsRepository.findOne.mockResolvedValue(project);
+      mockProjectAccessService.assertCanRead.mockRejectedValue(
+        new ForbiddenException('You are not a member of this project'),
+      );
 
       await expect(service.findByProject('proj-uuid-1', dev)).rejects.toThrow(ForbiddenException);
     });
 
     it('lanza NotFoundException (404) cuando el proyecto no existe', async () => {
-      mockProjectsRepository.findOne.mockResolvedValue(null);
       const dev = makeUser();
+      mockProjectAccessService.assertCanRead.mockRejectedValue(
+        new NotFoundException('Project not found'),
+      );
 
       await expect(service.findByProject('nonexistent', dev)).rejects.toThrow(NotFoundException);
     });
 
     it('excluye tareas canceladas de los resultados', async () => {
       const dev = makeUser();
-      const project = makeProject({ developers: [dev] });
       // Solo devuelve tareas no canceladas (el where excluye CANCELLED)
-      mockProjectsRepository.findOne.mockResolvedValue(project);
+      mockProjectAccessService.assertCanRead.mockResolvedValue(undefined);
       mockTasksRepository.find.mockResolvedValue([makeTask({ status: TaskStatus.TODO })]);
 
       const result = await service.findByProject('proj-uuid-1', dev);
@@ -303,6 +313,35 @@ describe('TasksService', () => {
       const result = await service.update('task-uuid-1', dto);
 
       expect(result.status).toBe(TaskStatus.TODO);
+    });
+
+    it('estampa completedAt al transicionar todo -> done via update() (PATCH admin)', async () => {
+      const task = makeTask({ status: TaskStatus.TODO, completedAt: null });
+      const dto: UpdateTaskDto = { status: TaskStatus.DONE as any };
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+      mockTasksRepository.save.mockImplementation(async (t: Task) => t);
+
+      const result = await service.update('task-uuid-1', dto);
+
+      expect(result.status).toBe(TaskStatus.DONE);
+      expect(result.completedAt).toBeInstanceOf(Date);
+      expect(mockTasksRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ completedAt: expect.any(Date) }),
+      );
+    });
+
+    it('no estampa completedAt en transiciones que no llegan a done via update()', async () => {
+      const task = makeTask({ status: TaskStatus.TODO, completedAt: null });
+      const dto: UpdateTaskDto = { status: TaskStatus.IN_PROGRESS as any };
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+      mockTasksRepository.save.mockImplementation(async (t: Task) => t);
+
+      const result = await service.update('task-uuid-1', dto);
+
+      expect(result.status).toBe(TaskStatus.IN_PROGRESS);
+      expect(result.completedAt).toBeNull();
     });
   });
 
@@ -399,6 +438,37 @@ describe('TasksService', () => {
       const result = await service.updateStatus('task-uuid-1', dto, dev);
 
       expect(result.status).toBe(TaskStatus.TODO);
+    });
+
+    it('estampa completedAt al transicionar in_progress -> done', async () => {
+      const dev = makeUser();
+      const task = makeTask({ assigneeId: dev.id, status: TaskStatus.IN_PROGRESS, completedAt: null });
+      const dto: UpdateStatusDto = { status: TaskStatus.DONE as any };
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+      mockTasksRepository.save.mockImplementation(async (t: Task) => t);
+
+      const result = await service.updateStatus('task-uuid-1', dto, dev);
+
+      expect(result.status).toBe(TaskStatus.DONE);
+      expect(result.completedAt).toBeInstanceOf(Date);
+      expect(mockTasksRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ completedAt: expect.any(Date) }),
+      );
+    });
+
+    it('no estampa completedAt en transiciones que no llegan a done', async () => {
+      const dev = makeUser();
+      const task = makeTask({ assigneeId: dev.id, status: TaskStatus.TODO, completedAt: null });
+      const dto: UpdateStatusDto = { status: TaskStatus.IN_PROGRESS as any };
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+      mockTasksRepository.save.mockImplementation(async (t: Task) => t);
+
+      const result = await service.updateStatus('task-uuid-1', dto, dev);
+
+      expect(result.status).toBe(TaskStatus.IN_PROGRESS);
+      expect(result.completedAt).toBeNull();
     });
   });
 
