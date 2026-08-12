@@ -65,6 +65,11 @@ export class Task {
   @Column({ name: 'estimated_hours', nullable: true, type: 'numeric' })
   estimatedHours: number | null;
 
+  // Fecha en que la tarea pasó a `done`; se estampa una única vez y nunca se limpia
+  // (done es un estado terminal, ver isStatusTransitionAllowed)
+  @Column({ name: 'completed_at', nullable: true, type: 'timestamptz' })
+  completedAt: Date | null;
+
   // Relación con el proyecto; al borrar el proyecto las tareas se eliminan en cascada
   @ManyToOne(() => Project, { onDelete: 'CASCADE', nullable: false })
   @JoinColumn({ name: 'project_id' })

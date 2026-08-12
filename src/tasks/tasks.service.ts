@@ -7,6 +7,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Not, Repository } from 'typeorm';
 import { Project } from '../projects/projects.entity';
+import { ProjectAccessService } from '../projects/project-access.service';
 import { User } from '../users/users.entity';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { TaskResponseDto } from './dto/task-response.dto';
@@ -24,6 +25,7 @@ export class TasksService {
     private readonly projectsRepository: Repository<Project>,
     @InjectRepository(User)
     private readonly usersRepository: Repository<User>,
+    private readonly projectAccessService: ProjectAccessService,
   ) {}
 
   // Crea una tarea; valida que el proyecto exista y opcionalmente carga el asignado
@@ -66,16 +68,7 @@ export class TasksService {
 
   // Devuelve tareas no canceladas de un proyecto; verifica que el usuario sea miembro del proyecto
   async findByProject(projectId: string, currentUser: User): Promise<TaskResponseDto[]> {
-    const project = await this.projectsRepository.findOne({
-      where: { id: projectId },
-      relations: { developers: true },
-    });
-    if (!project) throw new NotFoundException('Project not found');
-
-    const isMember = project.developers.some((dev) => dev.id === currentUser.id);
-    if (!isMember) {
-      throw new ForbiddenException('You are not a member of this project');
-    }
+    await this.projectAccessService.assertCanRead(projectId, currentUser, { allowAdmin: false });
 
     const tasks = await this.tasksRepository.find({
       where: {
@@ -97,6 +90,15 @@ export class TasksService {
     }
   }
 
+  // Estampa completedAt la primera vez que la tarea transiciona a done. No hay rama
+  // de limpieza: done es terminal (isStatusTransitionAllowed), por lo que una
+  // transición done -> otro estado nunca llega a ejecutar este método.
+  private stampCompletionIfNeeded(task: Task, next: TaskStatus): void {
+    if (next === TaskStatus.DONE && task.status !== TaskStatus.DONE) {
+      task.completedAt = new Date();
+    }
+  }
+
   // Actualización parcial completa de una tarea (solo admin)
   async update(id: string, dto: UpdateTaskDto): Promise<TaskResponseDto> {
     const task = await this.tasksRepository.findOne({ where: { id } });
@@ -108,7 +110,10 @@ export class TasksService {
 
     if (dto.title !== undefined) task.title = dto.title;
     if (dto.description !== undefined) task.description = dto.description ?? null;
-    if (dto.status !== undefined) task.status = dto.status;
+    if (dto.status !== undefined) {
+      this.stampCompletionIfNeeded(task, dto.status);
+      task.status = dto.status;
+    }
     if (dto.priority !== undefined) task.priority = dto.priority;
     if (dto.dueDate !== undefined) task.dueDate = dto.dueDate ? new Date(dto.dueDate) : null;
     if (dto.estimatedHours !== undefined) task.estimatedHours = dto.estimatedHours ?? null;
@@ -134,6 +139,7 @@ export class TasksService {
 
     this.assertStatusTransitionAllowed(task.status, dto.status as TaskStatus);
 
+    this.stampCompletionIfNeeded(task, dto.status as TaskStatus);
     task.status = dto.status as TaskStatus;
     const saved = await this.tasksRepository.save(task);
     return TaskResponseDto.from(saved);
