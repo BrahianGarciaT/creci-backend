@@ -9,6 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
 import { EntityManager, Repository } from 'typeorm';
 import { Project } from '../projects/projects.entity';
+import { clearAssigneeForRemovedDevelopers } from '../tasks/tasks-assignee-cascade';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UserResponseDto } from './dto/user-response.dto';
@@ -83,23 +84,26 @@ export class UsersService {
   // `save` se borrarían todos los demás developers del proyecto. Usamos dos
   // alias separados (mismo patrón que ProjectsService.findMine()): uno para
   // filtrar (`target`) y otro para cargar la lista completa (`developer`).
+  // Devuelve los IDs de los proyectos afectados (ya cargados aquí) para que el
+  // caller pueda encadenar clearAssigneeForRemovedDevelopers() en la misma transacción.
   private async removeAllProjectAssignments(
     manager: EntityManager,
     userId: string,
-  ): Promise<void> {
+  ): Promise<string[]> {
     const projects = await manager
       .createQueryBuilder(Project, 'project')
       .innerJoin('project.developers', 'target', 'target.id = :userId', { userId })
       .leftJoinAndSelect('project.developers', 'developer')
       .getMany();
 
-    if (projects.length === 0) return;
+    if (projects.length === 0) return [];
 
     for (const project of projects) {
       project.developers = project.developers.filter((d) => d.id !== userId);
     }
 
     await manager.save(projects);
+    return projects.map((p) => p.id);
   }
 
   // Desactiva (soft-delete) un usuario. Idempotente: si ya estaba inactivo devuelve 200.
@@ -125,7 +129,8 @@ export class UsersService {
     }
 
     await this.usersRepository.manager.transaction(async (manager) => {
-      await this.removeAllProjectAssignments(manager, id);
+      const affectedProjectIds = await this.removeAllProjectAssignments(manager, id);
+      await clearAssigneeForRemovedDevelopers(manager, affectedProjectIds, [id]);
       await manager.update(User, id, { isActive: false });
     });
 
@@ -151,7 +156,8 @@ export class UsersService {
       if (dto.role !== undefined) {
         changes.role = dto.role;
         if (dto.role !== UserRole.DEVELOPER) {
-          await this.removeAllProjectAssignments(manager, id);
+          const affectedProjectIds = await this.removeAllProjectAssignments(manager, id);
+          await clearAssigneeForRemovedDevelopers(manager, affectedProjectIds, [id]);
         }
       }
 

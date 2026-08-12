@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
+import { clearAssigneeForRemovedDevelopers } from '../tasks/tasks-assignee-cascade';
 import { UserRole } from '../users/users.entity';
 import { User } from '../users/users.entity';
 import { AssignDevelopersDto } from './dto/assign-developers.dto';
@@ -121,43 +122,54 @@ export class ProjectsService {
     });
     if (!project) throw new NotFoundException('Project not found');
 
+    const previousDeveloperIds = project.developers.map((d) => d.id);
+    let newDevelopers: User[];
+
     if (dto.developerIds.length === 0) {
-      project.developers = [];
-      const saved = await this.projectsRepository.save(project);
-      return ProjectResponseDto.from(saved);
+      newDevelopers = [];
+    } else {
+      // Busca los usuarios por los IDs provistos
+      const users = await this.usersRepository.find({
+        where: { id: In(dto.developerIds) },
+      });
+
+      // Detecta IDs inexistentes
+      const foundIds = new Set(users.map((u) => u.id));
+      const missingIds = dto.developerIds.filter((uid) => !foundIds.has(uid));
+      if (missingIds.length > 0) {
+        throw new BadRequestException(
+          `Los siguientes IDs no existen: ${missingIds.join(', ')}`,
+        );
+      }
+
+      // Detecta usuarios que no son developers activos
+      const invalidUsers = users.filter(
+        (u) => u.role !== UserRole.DEVELOPER || !u.isActive,
+      );
+      if (invalidUsers.length > 0) {
+        const invalidIds = invalidUsers.map((u) => u.id);
+        throw new BadRequestException(
+          `Los siguientes usuarios no son developers activos: ${invalidIds.join(', ')}`,
+        );
+      }
+
+      newDevelopers = users;
     }
 
-    // Busca los usuarios por los IDs provistos
-    const users = await this.usersRepository.find({
-      where: { id: In(dto.developerIds) },
+    // IDs removidos de la lista de developers: sus tareas no-done en este
+    // proyecto deben perder el assigneeId, atómicamente con el cambio de membresía.
+    const newDeveloperIds = new Set(newDevelopers.map((u) => u.id));
+    const removedIds = previousDeveloperIds.filter((uid) => !newDeveloperIds.has(uid));
+
+    await this.projectsRepository.manager.transaction(async (manager) => {
+      project.developers = newDevelopers;
+      await manager.save(project);
+      await clearAssigneeForRemovedDevelopers(manager, [id], removedIds);
     });
-
-    // Detecta IDs inexistentes
-    const foundIds = new Set(users.map((u) => u.id));
-    const missingIds = dto.developerIds.filter((uid) => !foundIds.has(uid));
-    if (missingIds.length > 0) {
-      throw new BadRequestException(
-        `Los siguientes IDs no existen: ${missingIds.join(', ')}`,
-      );
-    }
-
-    // Detecta usuarios que no son developers activos
-    const invalidUsers = users.filter(
-      (u) => u.role !== UserRole.DEVELOPER || !u.isActive,
-    );
-    if (invalidUsers.length > 0) {
-      const invalidIds = invalidUsers.map((u) => u.id);
-      throw new BadRequestException(
-        `Los siguientes usuarios no son developers activos: ${invalidIds.join(', ')}`,
-      );
-    }
-
-    project.developers = users;
-    const saved = await this.projectsRepository.save(project);
 
     // Recarga para incluir las relaciones completas en la respuesta
     const withRelations = await this.projectsRepository.findOne({
-      where: { id: saved.id },
+      where: { id },
       relations: { developers: true },
     });
     return ProjectResponseDto.from(withRelations!);
