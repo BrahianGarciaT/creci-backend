@@ -11,6 +11,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 import { UserResponseDto } from './dto/user-response.dto';
 import { User, UserRole } from './users.entity';
 import { UsersService } from './users.service';
@@ -32,6 +33,15 @@ export class UsersController {
   @Get()
   findAll(): Promise<UserResponseDto[]> {
     return this.usersService.findAll();
+  }
+
+  // PATCH /users/:id — actualiza role y/o password de un usuario
+  @Patch(':id')
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateUserDto,
+  ): Promise<UserResponseDto> {
+    return this.usersService.update(id, dto);
   }
 
   // PATCH /users/:id/deactivate — desactiva la cuenta del usuario indicado

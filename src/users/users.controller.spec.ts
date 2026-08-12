@@ -5,6 +5,7 @@ import {
 import { Test, TestingModule } from '@nestjs/testing';
 import { RolesGuard } from '../auth/roles.guard';
 import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 import { UserResponseDto } from './dto/user-response.dto';
 import { User, UserRole } from './users.entity';
 import { UsersController } from './users.controller';
@@ -42,6 +43,7 @@ function makeUser(overrides: Partial<User> = {}): User {
 const mockUsersService = {
   create: jest.fn(),
   findAll: jest.fn(),
+  update: jest.fn(),
   deactivate: jest.fn(),
 };
 
@@ -127,6 +129,27 @@ describe('UsersController', () => {
         expect(dto).not.toHaveProperty('password');
         expect(dto).not.toHaveProperty('refreshToken');
       });
+    });
+  });
+
+  // ── PATCH /users/:id ────────────────────────────────────────────────────────
+
+  describe('update', () => {
+    it('llama a UsersService.update con id y dto (ADMIN alcanza el endpoint)', async () => {
+      const dto: UpdateUserDto = { role: UserRole.ADMIN };
+      const responseDto = makeResponseDto({ role: UserRole.ADMIN });
+      mockUsersService.update.mockResolvedValue(responseDto);
+
+      const result = await controller.update('uuid-1', dto);
+
+      expect(mockUsersService.update).toHaveBeenCalledWith('uuid-1', dto);
+      expect(result).toBe(responseDto);
+    });
+
+    it('propaga NotFoundException (404) cuando el id no existe', async () => {
+      mockUsersService.update.mockRejectedValue(new NotFoundException('User not found'));
+
+      await expect(controller.update('nonexistent', {})).rejects.toThrow(NotFoundException);
     });
   });
 

@@ -7,8 +7,10 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
+import { Project } from '../projects/projects.entity';
 import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 import { UserResponseDto } from './dto/user-response.dto';
 import { User, UserRole } from './users.entity';
 
@@ -64,11 +66,45 @@ export class UsersService {
   // estable y un UPDATE (ej. deactivate/reactivate) puede reubicar la fila
   // (MVCC) — mismo bug ya corregido en tasks.service.ts.
   async findAll(): Promise<UserResponseDto[]> {
-    const users = await this.usersRepository.find({ order: { createdAt: 'ASC' } });
+    const users = await this.usersRepository.find({
+      relations: { projects: true },
+      order: { createdAt: 'ASC' },
+    });
     return users.map(UserResponseDto.from);
   }
 
+  // Elimina al usuario de la lista `developers` de todos los proyectos donde
+  // esté asignado. Mutamos Project.developers (lado dueño de la relación) —
+  // nunca user.projects (lado inverso, asignarlo sería un no-op silencioso).
+  //
+  // Trampa evitada: un `find({ where: { developers: { id } }, relations: { developers: true } })`
+  // reutilizaría el mismo alias de join para filtrar Y para cargar `developers`,
+  // por lo que la lista cargada contendría solo el usuario buscado — al hacer
+  // `save` se borrarían todos los demás developers del proyecto. Usamos dos
+  // alias separados (mismo patrón que ProjectsService.findMine()): uno para
+  // filtrar (`target`) y otro para cargar la lista completa (`developer`).
+  private async removeAllProjectAssignments(
+    manager: EntityManager,
+    userId: string,
+  ): Promise<void> {
+    const projects = await manager
+      .createQueryBuilder(Project, 'project')
+      .innerJoin('project.developers', 'target', 'target.id = :userId', { userId })
+      .leftJoinAndSelect('project.developers', 'developer')
+      .getMany();
+
+    if (projects.length === 0) return;
+
+    for (const project of projects) {
+      project.developers = project.developers.filter((d) => d.id !== userId);
+    }
+
+    await manager.save(projects);
+  }
+
   // Desactiva (soft-delete) un usuario. Idempotente: si ya estaba inactivo devuelve 200.
+  // Además de is_active=false, remueve al usuario de todas las asignaciones de
+  // proyecto en la misma transacción (cascada).
   async deactivate(id: string, actor: User): Promise<UserResponseDto> {
     const target = await this.findById(id);
     if (!target) throw new NotFoundException('User not found');
@@ -88,11 +124,57 @@ export class UsersService {
       return UserResponseDto.from(target);
     }
 
-    await this.usersRepository.update(id, { isActive: false });
-    return UserResponseDto.from({ ...target, isActive: false });
+    await this.usersRepository.manager.transaction(async (manager) => {
+      await this.removeAllProjectAssignments(manager, id);
+      await manager.update(User, id, { isActive: false });
+    });
+
+    const updated = await this.usersRepository.findOne({
+      where: { id },
+      relations: { projects: true },
+    });
+    return UserResponseDto.from(updated!);
   }
 
-  // Reactiva un usuario previamente desactivado; lanza 400 si ya está activo
+  // Actualiza role y/o password. `email` e `isActive` no son parte de UpdateUserDto,
+  // por lo que nunca se modifican aquí. Si el role cambia hacia afuera de DEVELOPER,
+  // remueve las asignaciones de proyecto (mismo helper/transacción que deactivate()).
+  // Si se envía password, se rehashea y refreshToken se pone en null (invalida
+  // sesión) — solo cuando password fue efectivamente enviado.
+  async update(id: string, dto: UpdateUserDto): Promise<UserResponseDto> {
+    const target = await this.findById(id);
+    if (!target) throw new NotFoundException('User not found');
+
+    await this.usersRepository.manager.transaction(async (manager) => {
+      const changes: Partial<User> = {};
+
+      if (dto.role !== undefined) {
+        changes.role = dto.role;
+        if (dto.role !== UserRole.DEVELOPER) {
+          await this.removeAllProjectAssignments(manager, id);
+        }
+      }
+
+      if (dto.password !== undefined) {
+        changes.password = await bcrypt.hash(dto.password, BCRYPT_SALT_ROUNDS);
+        changes.refreshToken = null;
+      }
+
+      if (Object.keys(changes).length > 0) {
+        await manager.update(User, id, changes);
+      }
+    });
+
+    const updated = await this.usersRepository.findOne({
+      where: { id },
+      relations: { projects: true },
+    });
+    return UserResponseDto.from(updated!);
+  }
+
+  // Reactiva un usuario previamente desactivado; lanza 400 si ya está activo.
+  // No restaura asignaciones de proyecto removidas por deactivate() — el admin
+  // debe reasignarlas manualmente.
   async reactivate(id: string): Promise<UserResponseDto> {
     const target = await this.findById(id);
     if (!target) throw new NotFoundException('User not found');
@@ -100,6 +182,11 @@ export class UsersService {
       throw new BadRequestException('User is already active');
     }
     await this.usersRepository.update(id, { isActive: true });
-    return UserResponseDto.from({ ...target, isActive: true });
+
+    const updated = await this.usersRepository.findOne({
+      where: { id },
+      relations: { projects: true },
+    });
+    return UserResponseDto.from(updated!);
   }
 }

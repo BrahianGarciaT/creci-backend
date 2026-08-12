@@ -1,9 +1,17 @@
-import { ConflictException, ForbiddenException, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
 import { JwtStrategy } from '../auth/jwt.strategy';
+import { Project, ProjectStatus } from '../projects/projects.entity';
 import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 import { UserResponseDto } from './dto/user-response.dto';
 import { User, UserRole } from './users.entity';
 import { UsersService } from './users.service';
@@ -18,11 +26,45 @@ function makeUser(overrides: Partial<User> = {}): User {
     role: UserRole.DEVELOPER,
     isActive: true,
     refreshToken: null,
+    projects: [],
     createdAt: new Date('2024-01-01'),
     updatedAt: new Date('2024-01-01'),
     ...overrides,
   } as User;
 }
+
+function makeProject(overrides: Partial<Project> = {}): Project {
+  return {
+    id: 'proj-uuid-1',
+    name: 'Test Project',
+    description: null,
+    status: ProjectStatus.ACTIVE,
+    developers: [],
+    createdAt: new Date('2024-01-01'),
+    updatedAt: new Date('2024-01-01'),
+    ...overrides,
+  } as Project;
+}
+
+// ── Mock del EntityManager (transacción) ────────────────────────────────────────
+// Encadenable: innerJoin/leftJoinAndSelect devuelven `this`, getMany resuelve el
+// resultado configurado en cada test vía mockQueryBuilder.getMany.mockResolvedValue(...)
+
+function makeQueryBuilder() {
+  return {
+    innerJoin: jest.fn().mockReturnThis(),
+    leftJoinAndSelect: jest.fn().mockReturnThis(),
+    getMany: jest.fn().mockResolvedValue([]),
+  };
+}
+
+let mockQueryBuilder = makeQueryBuilder();
+
+const mockManager = {
+  createQueryBuilder: jest.fn(() => mockQueryBuilder),
+  save: jest.fn(),
+  update: jest.fn(),
+};
 
 // ── Mock del repositorio ────────────────────────────────────────────────────────
 
@@ -32,6 +74,9 @@ const mockRepository = {
   create: jest.fn(),
   save: jest.fn(),
   update: jest.fn(),
+  manager: {
+    transaction: jest.fn((cb: (manager: typeof mockManager) => unknown) => cb(mockManager)),
+  },
 };
 
 // ── Suite principal ────────────────────────────────────────────────────────────
@@ -50,7 +95,11 @@ describe('UsersService', () => {
     service = module.get(UsersService);
   });
 
-  afterEach(() => jest.clearAllMocks());
+  afterEach(() => {
+    jest.clearAllMocks();
+    mockQueryBuilder = makeQueryBuilder();
+    mockManager.createQueryBuilder.mockImplementation(() => mockQueryBuilder);
+  });
 
   // ── findByEmail ─────────────────────────────────────────────────────────────
 
@@ -163,7 +212,10 @@ describe('UsersService', () => {
 
       const result = await service.findAll();
 
-      expect(mockRepository.find).toHaveBeenCalledWith({ order: { createdAt: 'ASC' } });
+      expect(mockRepository.find).toHaveBeenCalledWith({
+        relations: { projects: true },
+        order: { createdAt: 'ASC' },
+      });
       expect(result).toHaveLength(2);
       result.forEach((dto) => {
         expect(dto).toBeInstanceOf(UserResponseDto);
@@ -211,16 +263,213 @@ describe('UsersService', () => {
 
     it('desactiva el usuario y devuelve UserResponseDto con isActive false', async () => {
       const activeUser = makeUser({ id: 'uuid-1', isActive: true });
-      mockRepository.findOne.mockResolvedValue(activeUser);
-      mockRepository.update.mockResolvedValue({ affected: 1 });
+      const reloaded = makeUser({ id: 'uuid-1', isActive: false, projects: [] });
+      mockRepository.findOne.mockResolvedValueOnce(activeUser).mockResolvedValueOnce(reloaded);
+      mockQueryBuilder.getMany.mockResolvedValue([]);
 
       const result = await service.deactivate('uuid-1', adminActor);
 
-      expect(mockRepository.update).toHaveBeenCalledWith('uuid-1', { isActive: false });
+      expect(mockRepository.manager.transaction).toHaveBeenCalledTimes(1);
+      expect(mockManager.update).toHaveBeenCalledWith(User, 'uuid-1', { isActive: false });
+      expect(mockRepository.findOne).toHaveBeenLastCalledWith({
+        where: { id: 'uuid-1' },
+        relations: { projects: true },
+      });
       expect(result).toBeInstanceOf(UserResponseDto);
       expect(result.isActive).toBe(false);
       expect(result).not.toHaveProperty('password');
       expect(result).not.toHaveProperty('refreshToken');
+    });
+
+    it('usa el join de dos alias (target para filtrar, developer para cargar la lista completa)', async () => {
+      const activeUser = makeUser({ id: 'uuid-1', isActive: true });
+      const reloaded = makeUser({ id: 'uuid-1', isActive: false });
+      mockRepository.findOne.mockResolvedValueOnce(activeUser).mockResolvedValueOnce(reloaded);
+      mockQueryBuilder.getMany.mockResolvedValue([]);
+
+      await service.deactivate('uuid-1', adminActor);
+
+      expect(mockManager.createQueryBuilder).toHaveBeenCalledWith(Project, 'project');
+      expect(mockQueryBuilder.innerJoin).toHaveBeenCalledWith(
+        'project.developers',
+        'target',
+        'target.id = :userId',
+        { userId: 'uuid-1' },
+      );
+      expect(mockQueryBuilder.leftJoinAndSelect).toHaveBeenCalledWith('project.developers', 'developer');
+    });
+
+    it('trampa del join destructivo: un developer co-asignado en el mismo proyecto sobrevive a la cascada', async () => {
+      const target = makeUser({ id: 'uuid-1', isActive: true });
+      const coAssigned = makeUser({ id: 'uuid-2', email: 'other@example.com' });
+      const project = makeProject({
+        id: 'proj-1',
+        developers: [target, coAssigned],
+      });
+      const reloaded = makeUser({ id: 'uuid-1', isActive: false });
+
+      mockRepository.findOne.mockResolvedValueOnce(target).mockResolvedValueOnce(reloaded);
+      mockQueryBuilder.getMany.mockResolvedValue([project]);
+      mockManager.save.mockResolvedValue([project]);
+
+      await service.deactivate('uuid-1', adminActor);
+
+      expect(mockManager.save).toHaveBeenCalledTimes(1);
+      const savedProjects = mockManager.save.mock.calls[0][0] as { developers: User[] }[];
+      expect(savedProjects).toHaveLength(1);
+      // El co-developer debe seguir presente; solo el usuario objetivo se remueve
+      expect(savedProjects[0].developers.map((d) => d.id)).toEqual(['uuid-2']);
+    });
+
+    it('no persiste (no llama a manager.save) si el usuario no tiene proyectos asignados', async () => {
+      const activeUser = makeUser({ id: 'uuid-1', isActive: true });
+      const reloaded = makeUser({ id: 'uuid-1', isActive: false });
+      mockRepository.findOne.mockResolvedValueOnce(activeUser).mockResolvedValueOnce(reloaded);
+      mockQueryBuilder.getMany.mockResolvedValue([]);
+
+      await service.deactivate('uuid-1', adminActor);
+
+      expect(mockManager.save).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── update ──────────────────────────────────────────────────────────────────
+
+  describe('update', () => {
+    it('lanza NotFoundException (404) si el id no existe', async () => {
+      mockRepository.findOne.mockResolvedValue(null);
+
+      await expect(service.update('nonexistent', { role: UserRole.ADMIN })).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('aplica solo los campos definidos: role-only deja password y refreshToken intactos', async () => {
+      const target = makeUser({ id: 'uuid-1', role: UserRole.DEVELOPER });
+      const reloaded = makeUser({ id: 'uuid-1', role: UserRole.ADMIN, projects: [] });
+      mockRepository.findOne.mockResolvedValueOnce(target).mockResolvedValueOnce(reloaded);
+      mockQueryBuilder.getMany.mockResolvedValue([]);
+
+      const dto: UpdateUserDto = { role: UserRole.ADMIN };
+      const result = await service.update('uuid-1', dto);
+
+      expect(mockManager.update).toHaveBeenCalledWith(User, 'uuid-1', { role: UserRole.ADMIN });
+      expect(result.role).toBe(UserRole.ADMIN);
+    });
+
+    it('cuerpo vacío: no llama a manager.update (no-op) y devuelve el usuario sin cambios', async () => {
+      const target = makeUser({ id: 'uuid-1' });
+      const reloaded = makeUser({ id: 'uuid-1', projects: [] });
+      mockRepository.findOne.mockResolvedValueOnce(target).mockResolvedValueOnce(reloaded);
+
+      await service.update('uuid-1', {});
+
+      expect(mockManager.update).not.toHaveBeenCalled();
+    });
+
+    it('password provisto: se hashea con bcrypt y refreshToken se pone en null', async () => {
+      const target = makeUser({ id: 'uuid-1', refreshToken: 'old-token' });
+      const reloaded = makeUser({ id: 'uuid-1', projects: [] });
+      mockRepository.findOne.mockResolvedValueOnce(target).mockResolvedValueOnce(reloaded);
+
+      await service.update('uuid-1', { password: 'newpass123' });
+
+      expect(mockManager.update).toHaveBeenCalledTimes(1);
+      const [, , changes] = mockManager.update.mock.calls[0] as [unknown, unknown, Partial<User>];
+      expect(changes.refreshToken).toBeNull();
+      expect(changes.password).toMatch(/^\$2[ab]\$/);
+      const isMatch = await bcrypt.compare('newpass123', changes.password as string);
+      expect(isMatch).toBe(true);
+    });
+
+    it('password omitido: refreshToken no se modifica', async () => {
+      const target = makeUser({ id: 'uuid-1', refreshToken: 'old-token' });
+      const reloaded = makeUser({ id: 'uuid-1', projects: [] });
+      mockRepository.findOne.mockResolvedValueOnce(target).mockResolvedValueOnce(reloaded);
+      mockQueryBuilder.getMany.mockResolvedValue([]);
+
+      await service.update('uuid-1', { role: UserRole.ADMIN });
+
+      const [, , changes] = mockManager.update.mock.calls[0] as [unknown, unknown, Partial<User>];
+      expect(changes).not.toHaveProperty('refreshToken');
+    });
+
+    it('cambio de role away from DEVELOPER llama a removeAllProjectAssignments (cascada)', async () => {
+      const target = makeUser({ id: 'uuid-1', role: UserRole.DEVELOPER });
+      const reloaded = makeUser({ id: 'uuid-1', role: UserRole.ADMIN, projects: [] });
+      mockRepository.findOne.mockResolvedValueOnce(target).mockResolvedValueOnce(reloaded);
+      mockQueryBuilder.getMany.mockResolvedValue([]);
+
+      await service.update('uuid-1', { role: UserRole.ADMIN });
+
+      expect(mockManager.createQueryBuilder).toHaveBeenCalledWith(Project, 'project');
+      expect(mockQueryBuilder.innerJoin).toHaveBeenCalledWith(
+        'project.developers',
+        'target',
+        'target.id = :userId',
+        { userId: 'uuid-1' },
+      );
+    });
+
+    it('role sin cambios (developer -> developer) no dispara cascada', async () => {
+      const target = makeUser({ id: 'uuid-1', role: UserRole.DEVELOPER });
+      const reloaded = makeUser({ id: 'uuid-1', role: UserRole.DEVELOPER, projects: [] });
+      mockRepository.findOne.mockResolvedValueOnce(target).mockResolvedValueOnce(reloaded);
+
+      await service.update('uuid-1', { role: UserRole.DEVELOPER });
+
+      expect(mockManager.createQueryBuilder).not.toHaveBeenCalled();
+    });
+
+    it('promoción a developer no dispara cascada', async () => {
+      const target = makeUser({ id: 'uuid-1', role: UserRole.ADMIN });
+      const reloaded = makeUser({ id: 'uuid-1', role: UserRole.DEVELOPER, projects: [] });
+      mockRepository.findOne.mockResolvedValueOnce(target).mockResolvedValueOnce(reloaded);
+
+      await service.update('uuid-1', { role: UserRole.DEVELOPER });
+
+      expect(mockManager.createQueryBuilder).not.toHaveBeenCalled();
+    });
+
+    it('la respuesta nunca incluye password ni refreshToken', async () => {
+      const target = makeUser({ id: 'uuid-1' });
+      const reloaded = makeUser({ id: 'uuid-1', projects: [] });
+      mockRepository.findOne.mockResolvedValueOnce(target).mockResolvedValueOnce(reloaded);
+
+      const result = await service.update('uuid-1', { role: UserRole.ADMIN });
+
+      expect(result).not.toHaveProperty('password');
+      expect(result).not.toHaveProperty('refreshToken');
+    });
+  });
+
+  // ── reactivate ──────────────────────────────────────────────────────────────
+
+  describe('reactivate', () => {
+    it('lanza NotFoundException (404) si el id no existe', async () => {
+      mockRepository.findOne.mockResolvedValue(null);
+
+      await expect(service.reactivate('nonexistent')).rejects.toThrow(NotFoundException);
+    });
+
+    it('lanza BadRequestException (400) si el usuario ya está activo', async () => {
+      const activeUser = makeUser({ id: 'uuid-1', isActive: true });
+      mockRepository.findOne.mockResolvedValue(activeUser);
+
+      await expect(service.reactivate('uuid-1')).rejects.toThrow(BadRequestException);
+    });
+
+    it('reactiva el usuario y no restaura las asignaciones de proyecto removidas', async () => {
+      const inactiveUser = makeUser({ id: 'uuid-1', isActive: false, projects: [] });
+      const reloaded = makeUser({ id: 'uuid-1', isActive: true, projects: [] });
+      mockRepository.findOne.mockResolvedValueOnce(inactiveUser).mockResolvedValueOnce(reloaded);
+      mockRepository.update.mockResolvedValue({ affected: 1 });
+
+      const result = await service.reactivate('uuid-1');
+
+      expect(mockRepository.update).toHaveBeenCalledWith('uuid-1', { isActive: true });
+      expect(result.isActive).toBe(true);
+      expect(result.projects).toEqual([]);
     });
   });
 });
