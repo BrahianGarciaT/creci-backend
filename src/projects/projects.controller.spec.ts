@@ -156,9 +156,42 @@ describe('ProjectsController', () => {
   // ── Metadatos de guards ─────────────────────────────────────────────────────
 
   describe('RolesGuard metadata', () => {
-    it('el controlador tiene @Roles(UserRole.ADMIN) en sus metadatos', () => {
-      const roles: UserRole[] = Reflect.getMetadata('roles', ProjectsController);
+    // @Roles se aplica por método, no a nivel de clase — la metadata vive en
+    // cada handler (mismo patrón que tasks.controller.spec.ts), no en el
+    // constructor del controller.
+    it('el handler findAll tiene @Roles(UserRole.ADMIN)', () => {
+      const roles: UserRole[] = Reflect.getMetadata('roles', controller.findAll);
       expect(roles).toContain(UserRole.ADMIN);
+    });
+
+    it('el handler create tiene @Roles(UserRole.ADMIN)', () => {
+      const roles: UserRole[] = Reflect.getMetadata('roles', controller.create);
+      expect(roles).toContain(UserRole.ADMIN);
+    });
+
+    it('el handler update tiene @Roles(UserRole.ADMIN)', () => {
+      const roles: UserRole[] = Reflect.getMetadata('roles', controller.update);
+      expect(roles).toContain(UserRole.ADMIN);
+    });
+
+    it('el handler deactivate tiene @Roles(UserRole.ADMIN)', () => {
+      const roles: UserRole[] = Reflect.getMetadata('roles', controller.deactivate);
+      expect(roles).toContain(UserRole.ADMIN);
+    });
+
+    it('el handler reactivate tiene @Roles(UserRole.ADMIN)', () => {
+      const roles: UserRole[] = Reflect.getMetadata('roles', controller.reactivate);
+      expect(roles).toContain(UserRole.ADMIN);
+    });
+
+    it('el handler assignDevelopers tiene @Roles(UserRole.ADMIN)', () => {
+      const roles: UserRole[] = Reflect.getMetadata('roles', controller.assignDevelopers);
+      expect(roles).toContain(UserRole.ADMIN);
+    });
+
+    it('el handler findMine no tiene @Roles (JWT-only)', () => {
+      const roles: UserRole[] | undefined = Reflect.getMetadata('roles', controller.findMine);
+      expect(roles).toBeUndefined();
     });
   });
 });
