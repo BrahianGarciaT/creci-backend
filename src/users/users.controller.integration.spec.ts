@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { APP_GUARD } from '@nestjs/core';
+import { Request } from 'express';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { RolesGuard } from '../auth/roles.guard';
@@ -27,7 +28,9 @@ import { User, UserRole } from './users.entity';
  * inyecta request.user desde un header, ya que probar el JWT en sí no es
  * parte de los escenarios de esta spec.
  */
-function makeResponseDto(overrides: Partial<UserResponseDto> = {}): UserResponseDto {
+function makeResponseDto(
+  overrides: Partial<UserResponseDto> = {},
+): UserResponseDto {
   const dto = new UserResponseDto();
   dto.id = 'uuid-1';
   dto.email = 'dev@example.com';
@@ -42,7 +45,7 @@ function makeResponseDto(overrides: Partial<UserResponseDto> = {}): UserResponse
 // dejando que RolesGuard (real) sea quien realmente decide 403 sí/no.
 class FakeAuthGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
-    const req = context.switchToHttp().getRequest();
+    const req = context.switchToHttp().getRequest<Request & { user?: User }>();
     const role = req.headers['x-test-role'] as UserRole | undefined;
     if (role) {
       req.user = { id: 'actor-uuid', role } as User;
@@ -68,7 +71,9 @@ describe('UsersController (integración — ValidationPipe y RolesGuard reales)'
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }));
+    app.useGlobalPipes(
+      new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }),
+    );
     await app.init();
   });
 
@@ -90,7 +95,9 @@ describe('UsersController (integración — ValidationPipe y RolesGuard reales)'
     });
 
     it('permite el acceso cuando el actor autenticado es admin', async () => {
-      mockUsersService.update.mockResolvedValue(makeResponseDto({ role: UserRole.ADMIN }));
+      mockUsersService.update.mockResolvedValue(
+        makeResponseDto({ role: UserRole.ADMIN }),
+      );
 
       await request(app.getHttpServer())
         .patch('/users/uuid-1')
@@ -98,7 +105,9 @@ describe('UsersController (integración — ValidationPipe y RolesGuard reales)'
         .send({ role: UserRole.ADMIN })
         .expect(200);
 
-      expect(mockUsersService.update).toHaveBeenCalledWith('uuid-1', { role: UserRole.ADMIN });
+      expect(mockUsersService.update).toHaveBeenCalledWith('uuid-1', {
+        role: UserRole.ADMIN,
+      });
     });
   });
 

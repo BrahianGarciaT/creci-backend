@@ -155,20 +155,29 @@ describe('DashboardController', () => {
 
   // ── Metadatos de guards ──────────────────────────────────────────────────────
 
+  // Reflect.getMetadata necesita la referencia exacta a la función del método
+  // (ahí es donde el decorador @Roles adjunta la metadata) — .bind() crearía
+  // una función nueva sin esa metadata, así que no es una alternativa válida.
+  // Re-tipar el controller como Record<string, object> evita que TS vea estas
+  // propiedades como "métodos de clase con this" (lo que dispara unbound-method)
+  // sin alterar la referencia real que se le pasa a Reflect.getMetadata.
+  function getRolesMetadata(
+    methodName: keyof DashboardController,
+  ): UserRole[] | undefined {
+    const proto = controller as unknown as Record<string, object>;
+    return Reflect.getMetadata('roles', proto[methodName]) as
+      | UserRole[]
+      | undefined;
+  }
+
   describe('sin @Roles', () => {
     it('el handler getOverview no tiene @Roles (JWT-only, scoping a nivel de datos)', () => {
-      const roles: UserRole[] | undefined = Reflect.getMetadata(
-        'roles',
-        controller.getOverview,
-      );
+      const roles = getRolesMetadata('getOverview');
       expect(roles).toBeUndefined();
     });
 
     it('el handler getProjectDetail no tiene @Roles (JWT-only, assertCanRead en el servicio)', () => {
-      const roles: UserRole[] | undefined = Reflect.getMetadata(
-        'roles',
-        controller.getProjectDetail,
-      );
+      const roles = getRolesMetadata('getProjectDetail');
       expect(roles).toBeUndefined();
     });
   });

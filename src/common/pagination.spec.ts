@@ -19,8 +19,18 @@ describe('resolvePagination', () => {
   });
 
   it('respeta page/limit provistos aunque uno esté ausente', () => {
-    expect(resolvePagination({ page: 2 })).toEqual({ page: 2, limit: 20, skip: 20, take: 20 });
-    expect(resolvePagination({ limit: 5 })).toEqual({ page: 1, limit: 5, skip: 0, take: 5 });
+    expect(resolvePagination({ page: 2 })).toEqual({
+      page: 2,
+      limit: 20,
+      skip: 20,
+      take: 20,
+    });
+    expect(resolvePagination({ limit: 5 })).toEqual({
+      page: 1,
+      limit: 5,
+      skip: 0,
+      take: 5,
+    });
   });
 });
 
@@ -54,10 +64,18 @@ describe('PaginationQueryDto', () => {
 
 describe('PaginatedResponseDto.from', () => {
   it('calcula totalPages redondeando hacia arriba', () => {
-    const result = PaginatedResponseDto.from(['a', 'b'], 25, { page: 1, limit: 20 });
+    const result = PaginatedResponseDto.from(['a', 'b'], 25, {
+      page: 1,
+      limit: 20,
+    });
 
     expect(result.data).toEqual(['a', 'b']);
-    expect(result.meta).toEqual({ total: 25, page: 1, limit: 20, totalPages: 2 });
+    expect(result.meta).toEqual({
+      total: 25,
+      page: 1,
+      limit: 20,
+      totalPages: 2,
+    });
   });
 
   it('devuelve totalPages=0 cuando total es 0', () => {

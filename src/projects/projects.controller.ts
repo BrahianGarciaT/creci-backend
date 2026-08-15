@@ -31,7 +31,13 @@ export class ProjectsController {
   @Get('mine')
   findMine(
     @Req() req: Request,
-    @Query(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
+    @Query(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
     query: PaginationQueryDto,
   ): Promise<PaginatedResponseDto<ProjectResponseDto>> {
     const user = req.user as { id: string };
@@ -43,7 +49,13 @@ export class ProjectsController {
   @UseGuards(RolesGuard)
   @Roles(UserRole.ADMIN)
   findAll(
-    @Query(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
+    @Query(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
     query: PaginationQueryDto,
   ): Promise<PaginatedResponseDto<ProjectResponseDto>> {
     return this.projectsService.findAll(query);

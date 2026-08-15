@@ -3,7 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { User, UserRole } from '../users/users.entity';
 import { ProjectAccessService } from './project-access.service';
-import { Project } from './projects.entity';
+import { Project, ProjectStatus } from './projects.entity';
 
 function makeUser(overrides: Partial<User> = {}): User {
   return {
@@ -17,7 +17,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     createdAt: new Date('2024-01-01'),
     updatedAt: new Date('2024-01-01'),
     ...overrides,
-  } as User;
+  };
 }
 
 function makeProject(overrides: Partial<Project> = {}): Project {
@@ -25,12 +25,12 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     id: 'proj-uuid-1',
     name: 'Test Project',
     description: null,
-    status: 'active' as any,
+    status: ProjectStatus.ACTIVE,
     developers: [],
     createdAt: new Date('2024-01-01'),
     updatedAt: new Date('2024-01-01'),
     ...overrides,
-  } as Project;
+  };
 }
 
 const mockProjectsRepository = {
@@ -44,7 +44,10 @@ describe('ProjectAccessService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ProjectAccessService,
-        { provide: getRepositoryToken(Project), useValue: mockProjectsRepository },
+        {
+          provide: getRepositoryToken(Project),
+          useValue: mockProjectsRepository,
+        },
       ],
     }).compile();
 
@@ -65,7 +68,9 @@ describe('ProjectAccessService', () => {
 
     it('lanza ForbiddenException (403) cuando el developer no es miembro (allowAdmin: false)', async () => {
       const dev = makeUser({ id: 'outsider-id' });
-      const project = makeProject({ developers: [makeUser({ id: 'member-id' })] });
+      const project = makeProject({
+        developers: [makeUser({ id: 'member-id' })],
+      });
       mockProjectsRepository.findOne.mockResolvedValue(project);
 
       await expect(
@@ -85,7 +90,9 @@ describe('ProjectAccessService', () => {
 
     it('lanza ForbiddenException (403) para un admin no miembro cuando allowAdmin es false', async () => {
       const admin = makeUser({ id: 'admin-id', role: UserRole.ADMIN });
-      const project = makeProject({ developers: [makeUser({ id: 'member-id' })] });
+      const project = makeProject({
+        developers: [makeUser({ id: 'member-id' })],
+      });
       mockProjectsRepository.findOne.mockResolvedValue(project);
 
       await expect(
@@ -95,7 +102,9 @@ describe('ProjectAccessService', () => {
 
     it('permite el acceso a un admin no miembro cuando allowAdmin es true', async () => {
       const admin = makeUser({ id: 'admin-id', role: UserRole.ADMIN });
-      const project = makeProject({ developers: [makeUser({ id: 'member-id' })] });
+      const project = makeProject({
+        developers: [makeUser({ id: 'member-id' })],
+      });
       mockProjectsRepository.findOne.mockResolvedValue(project);
 
       await expect(
@@ -105,7 +114,9 @@ describe('ProjectAccessService', () => {
 
     it('lanza ForbiddenException (403) para un developer no miembro cuando allowAdmin es true', async () => {
       const dev = makeUser({ id: 'outsider-id' });
-      const project = makeProject({ developers: [makeUser({ id: 'member-id' })] });
+      const project = makeProject({
+        developers: [makeUser({ id: 'member-id' })],
+      });
       mockProjectsRepository.findOne.mockResolvedValue(project);
 
       await expect(

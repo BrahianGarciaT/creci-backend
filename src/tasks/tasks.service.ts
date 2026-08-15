@@ -33,7 +33,7 @@ export class TasksService {
   ) {}
 
   // Crea una tarea; valida que el proyecto exista y opcionalmente carga el asignado
-  async create(dto: CreateTaskDto, _adminUser: User): Promise<TaskResponseDto> {
+  async create(dto: CreateTaskDto): Promise<TaskResponseDto> {
     if (dto.assigneeId) {
       const assignee = await this.usersRepository.findOne({
         where: { id: dto.assigneeId },
@@ -41,7 +41,10 @@ export class TasksService {
       if (!assignee) throw new NotFoundException('Assignee not found');
     }
 
-    await this.loadProjectAndAssertMembership(dto.projectId, dto.assigneeId ?? null);
+    await this.loadProjectAndAssertMembership(
+      dto.projectId,
+      dto.assigneeId ?? null,
+    );
 
     const task = this.tasksRepository.create({
       title: dto.title,
@@ -62,7 +65,9 @@ export class TasksService {
   // un UPDATE puede reubicar la fila (MVCC), haciendo que la tarea "salte" de posición
   // en el cliente justo al editarla. Ahora también load-bearing para la estabilidad
   // de la paginación por offset entre páginas consecutivas.
-  async findAll(query: TaskListQueryDto): Promise<PaginatedResponseDto<TaskResponseDto>> {
+  async findAll(
+    query: TaskListQueryDto,
+  ): Promise<PaginatedResponseDto<TaskResponseDto>> {
     const { page, limit, skip, take } = resolvePagination(query);
     const where: FindOptionsWhere<Task> = {};
     if (query.projectId) where.projectId = query.projectId;
@@ -75,7 +80,14 @@ export class TasksService {
       skip,
       take,
     });
-    return PaginatedResponseDto.from(tasks.map(TaskResponseDto.from), total, { page, limit });
+    return PaginatedResponseDto.from(
+      tasks.map((task) => TaskResponseDto.from(task)),
+      total,
+      {
+        page,
+        limit,
+      },
+    );
   }
 
   // Devuelve tareas no canceladas de un proyecto, paginadas; verifica que el usuario sea miembro del proyecto
@@ -84,7 +96,9 @@ export class TasksService {
     currentUser: User,
     query: PaginationQueryDto,
   ): Promise<PaginatedResponseDto<TaskResponseDto>> {
-    await this.projectAccessService.assertCanRead(projectId, currentUser, { allowAdmin: false });
+    await this.projectAccessService.assertCanRead(projectId, currentUser, {
+      allowAdmin: false,
+    });
 
     const { page, limit, skip, take } = resolvePagination(query);
     const [tasks, total] = await this.tasksRepository.findAndCount({
@@ -97,7 +111,14 @@ export class TasksService {
       skip,
       take,
     });
-    return PaginatedResponseDto.from(tasks.map(TaskResponseDto.from), total, { page, limit });
+    return PaginatedResponseDto.from(
+      tasks.map((task) => TaskResponseDto.from(task)),
+      total,
+      {
+        page,
+        limit,
+      },
+    );
   }
 
   // Carga el proyecto con sus developers y valida que el asignado (si hay) sea miembro
@@ -120,7 +141,10 @@ export class TasksService {
 
   // Lanza BadRequestException si la transición de estado solicitada no está permitida
   // (una tarea done es terminal, salvo el no-op done -> done)
-  private assertStatusTransitionAllowed(current: TaskStatus, next: TaskStatus): void {
+  private assertStatusTransitionAllowed(
+    current: TaskStatus,
+    next: TaskStatus,
+  ): void {
     if (!isStatusTransitionAllowed(current, next)) {
       throw new BadRequestException(
         'A completed task cannot change status. Create a new task instead.',
@@ -172,19 +196,27 @@ export class TasksService {
     if (dto.projectId !== undefined || dto.assigneeId !== undefined) {
       const effectiveProjectId = dto.projectId ?? task.projectId;
       const effectiveAssigneeId =
-        dto.assigneeId !== undefined ? (dto.assigneeId ?? null) : task.assigneeId;
-      await this.loadProjectAndAssertMembership(effectiveProjectId, effectiveAssigneeId);
+        dto.assigneeId !== undefined
+          ? (dto.assigneeId ?? null)
+          : task.assigneeId;
+      await this.loadProjectAndAssertMembership(
+        effectiveProjectId,
+        effectiveAssigneeId,
+      );
     }
 
     if (dto.title !== undefined) task.title = dto.title;
-    if (dto.description !== undefined) task.description = dto.description ?? null;
+    if (dto.description !== undefined)
+      task.description = dto.description ?? null;
     if (dto.status !== undefined) {
       this.stampCompletionIfNeeded(task, dto.status);
       task.status = dto.status;
     }
     if (dto.priority !== undefined) task.priority = dto.priority;
-    if (dto.dueDate !== undefined) task.dueDate = dto.dueDate ? new Date(dto.dueDate) : null;
-    if (dto.estimatedHours !== undefined) task.estimatedHours = dto.estimatedHours ?? null;
+    if (dto.dueDate !== undefined)
+      task.dueDate = dto.dueDate ? new Date(dto.dueDate) : null;
+    if (dto.estimatedHours !== undefined)
+      task.estimatedHours = dto.estimatedHours ?? null;
     if (dto.projectId !== undefined) task.projectId = dto.projectId;
     if (dto.assigneeId !== undefined) task.assigneeId = dto.assigneeId ?? null;
 
@@ -193,7 +225,11 @@ export class TasksService {
   }
 
   // Actualiza el status de una tarea; solo el asignado puede hacerlo y no puede poner CANCELLED
-  async updateStatus(id: string, dto: UpdateStatusDto, currentUser: User): Promise<TaskResponseDto> {
+  async updateStatus(
+    id: string,
+    dto: UpdateStatusDto,
+    currentUser: User,
+  ): Promise<TaskResponseDto> {
     const task = await this.tasksRepository.findOne({ where: { id } });
     if (!task) throw new NotFoundException('Task not found');
 
@@ -201,14 +237,18 @@ export class TasksService {
       throw new ForbiddenException('You are not the assignee of this task');
     }
 
-    if ((dto.status as string) === TaskStatus.CANCELLED) {
-      throw new BadRequestException('Cannot set status to cancelled via this endpoint');
+    // dto.status está tipado como AllowedStatus (excluye CANCELLED) por
+    // UpdateStatusDto, pero se revalida en runtime como defensa en profundidad.
+    if ((dto.status as unknown as TaskStatus) === TaskStatus.CANCELLED) {
+      throw new BadRequestException(
+        'Cannot set status to cancelled via this endpoint',
+      );
     }
 
-    this.assertStatusTransitionAllowed(task.status, dto.status as TaskStatus);
+    this.assertStatusTransitionAllowed(task.status, dto.status);
 
-    this.stampCompletionIfNeeded(task, dto.status as TaskStatus);
-    task.status = dto.status as TaskStatus;
+    this.stampCompletionIfNeeded(task, dto.status);
+    task.status = dto.status;
     const saved = await this.tasksRepository.save(task);
     return TaskResponseDto.from(saved);
   }
