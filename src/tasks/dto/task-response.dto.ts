@@ -1,5 +1,3 @@
-import { Project } from '../../projects/projects.entity';
-import { User } from '../../users/users.entity';
 import { Task, TaskPriority, TaskStatus } from '../tasks.entity';
 
 interface ProjectSummary {
@@ -38,12 +36,20 @@ export class TaskResponseDto {
     dto.status = task.status;
     dto.priority = task.priority;
     dto.dueDate = task.dueDate ?? null;
-    dto.estimatedHours = task.estimatedHours != null ? Number(task.estimatedHours) : null;
+    dto.estimatedHours =
+      task.estimatedHours != null ? Number(task.estimatedHours) : null;
     dto.completedAt = task.completedAt ?? null;
     dto.projectId = task.projectId;
-    dto.project = task.project ? { id: (task.project as Project).id, name: (task.project as Project).name } : null;
+    dto.project = task.project
+      ? {
+          id: task.project.id,
+          name: task.project.name,
+        }
+      : null;
     dto.assigneeId = task.assigneeId ?? null;
-    dto.assignee = task.assignee ? { id: (task.assignee as User).id, email: (task.assignee as User).email } : null;
+    dto.assignee = task.assignee
+      ? { id: task.assignee.id, email: task.assignee.email }
+      : null;
     dto.createdAt = task.createdAt;
     dto.updatedAt = task.updatedAt;
     return dto;

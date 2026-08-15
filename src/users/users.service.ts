@@ -33,7 +33,10 @@ export class UsersService {
     return this.usersRepository.findOne({ where: { id } });
   }
 
-  async updateRefreshToken(id: string, refreshToken: string | null): Promise<void> {
+  async updateRefreshToken(
+    id: string,
+    refreshToken: string | null,
+  ): Promise<void> {
     await this.usersRepository.update(id, { refreshToken });
   }
 
@@ -71,7 +74,7 @@ export class UsersService {
       relations: { projects: true },
       order: { createdAt: 'ASC' },
     });
-    return users.map(UserResponseDto.from);
+    return users.map((user) => UserResponseDto.from(user));
   }
 
   // Elimina al usuario de la lista `developers` de todos los proyectos donde
@@ -92,7 +95,9 @@ export class UsersService {
   ): Promise<string[]> {
     const projects = await manager
       .createQueryBuilder(Project, 'project')
-      .innerJoin('project.developers', 'target', 'target.id = :userId', { userId })
+      .innerJoin('project.developers', 'target', 'target.id = :userId', {
+        userId,
+      })
       .leftJoinAndSelect('project.developers', 'developer')
       .getMany();
 
@@ -129,8 +134,13 @@ export class UsersService {
     }
 
     await this.usersRepository.manager.transaction(async (manager) => {
-      const affectedProjectIds = await this.removeAllProjectAssignments(manager, id);
-      await clearAssigneeForRemovedDevelopers(manager, affectedProjectIds, [id]);
+      const affectedProjectIds = await this.removeAllProjectAssignments(
+        manager,
+        id,
+      );
+      await clearAssigneeForRemovedDevelopers(manager, affectedProjectIds, [
+        id,
+      ]);
       await manager.update(User, id, { isActive: false });
     });
 
@@ -156,8 +166,13 @@ export class UsersService {
       if (dto.role !== undefined) {
         changes.role = dto.role;
         if (dto.role !== UserRole.DEVELOPER) {
-          const affectedProjectIds = await this.removeAllProjectAssignments(manager, id);
-          await clearAssigneeForRemovedDevelopers(manager, affectedProjectIds, [id]);
+          const affectedProjectIds = await this.removeAllProjectAssignments(
+            manager,
+            id,
+          );
+          await clearAssigneeForRemovedDevelopers(manager, affectedProjectIds, [
+            id,
+          ]);
         }
       }
 

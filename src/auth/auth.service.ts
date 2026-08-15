@@ -41,7 +41,11 @@ export class AuthService {
   }
 
   private async generateTokenPair(user: User): Promise<TokenResponseDto> {
-    const payload: JwtPayload = { sub: user.id, email: user.email, role: user.role };
+    const payload: JwtPayload = {
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+    };
 
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(payload, {
@@ -50,11 +54,16 @@ export class AuthService {
       }),
       this.jwtService.signAsync(payload, {
         secret: this.configService.getOrThrow<string>('JWT_REFRESH_SECRET'),
-        expiresIn: this.configService.getOrThrow<ExpiresIn>('JWT_REFRESH_EXPIRES_IN'),
+        expiresIn: this.configService.getOrThrow<ExpiresIn>(
+          'JWT_REFRESH_EXPIRES_IN',
+        ),
       }),
     ]);
 
-    const hashedRefreshToken = await bcrypt.hash(refreshToken, BCRYPT_SALT_ROUNDS);
+    const hashedRefreshToken = await bcrypt.hash(
+      refreshToken,
+      BCRYPT_SALT_ROUNDS,
+    );
     await this.usersService.updateRefreshToken(user.id, hashedRefreshToken);
 
     return { accessToken, refreshToken };

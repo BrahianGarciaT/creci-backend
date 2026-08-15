@@ -17,7 +17,8 @@ export class UserResponseDto {
     dto.email = user.email;
     dto.role = user.role;
     dto.isActive = user.isActive;
-    dto.projects = user.projects?.map((p) => ({ id: p.id, name: p.name })) ?? [];
+    dto.projects =
+      user.projects?.map((p) => ({ id: p.id, name: p.name })) ?? [];
     dto.createdAt = user.createdAt;
     dto.updatedAt = user.updatedAt;
     return dto;

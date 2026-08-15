@@ -8,8 +8,18 @@ import { User } from '../users/users.entity';
 import { UsersService } from '../users/users.service';
 import { JwtPayload } from './jwt.strategy';
 
+// Express tipa Request.body como `any` por defecto; extender la interfaz
+// (en vez de intersectar con `&`) permite sobreescribir el tipo del campo
+// sin que colapse a `any` (una intersección con `any` sigue siendo `any`).
+interface RefreshTokenRequest extends Request {
+  body: { refreshToken: string };
+}
+
 @Injectable()
-export class JwtRefreshStrategy extends PassportStrategy(Strategy, 'jwt-refresh') {
+export class JwtRefreshStrategy extends PassportStrategy(
+  Strategy,
+  'jwt-refresh',
+) {
   constructor(
     configService: ConfigService,
     private readonly usersService: UsersService,
@@ -22,11 +32,14 @@ export class JwtRefreshStrategy extends PassportStrategy(Strategy, 'jwt-refresh'
     });
   }
 
-  async validate(req: Request & { body: { refreshToken: string } }, payload: JwtPayload): Promise<User> {
+  async validate(req: RefreshTokenRequest, payload: JwtPayload): Promise<User> {
     const user = await this.usersService.findById(payload.sub);
     if (!user?.refreshToken) throw new UnauthorizedException();
 
-    const tokenMatches = await bcrypt.compare(req.body.refreshToken, user.refreshToken);
+    const tokenMatches = await bcrypt.compare(
+      req.body.refreshToken,
+      user.refreshToken,
+    );
     if (!tokenMatches) throw new UnauthorizedException();
 
     return user;

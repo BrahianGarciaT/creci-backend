@@ -12,7 +12,9 @@ import { ProjectsService } from './projects.service';
 
 // ── Helpers de fixture ─────────────────────────────────────────────────────────
 
-function makeResponseDto(overrides: Partial<ProjectResponseDto> = {}): ProjectResponseDto {
+function makeResponseDto(
+  overrides: Partial<ProjectResponseDto> = {},
+): ProjectResponseDto {
   const dto = new ProjectResponseDto();
   dto.id = 'proj-uuid-1';
   dto.name = 'Test Project';
@@ -62,8 +64,14 @@ describe('ProjectsController', () => {
 
   describe('findAll', () => {
     it('llama a ProjectsService.findAll con la query de paginación y devuelve el envelope', async () => {
-      const dtos = [makeResponseDto(), makeResponseDto({ id: 'proj-uuid-2', name: 'Another' })];
-      const paginated = { data: dtos, meta: { total: 2, page: 1, limit: 20, totalPages: 1 } };
+      const dtos = [
+        makeResponseDto(),
+        makeResponseDto({ id: 'proj-uuid-2', name: 'Another' }),
+      ];
+      const paginated = {
+        data: dtos,
+        meta: { total: 2, page: 1, limit: 20, totalPages: 1 },
+      };
       mockProjectsService.findAll.mockResolvedValue(paginated);
 
       const result = await controller.findAll({});
@@ -77,7 +85,10 @@ describe('ProjectsController', () => {
 
   describe('create', () => {
     it('llama a ProjectsService.create con el DTO recibido', async () => {
-      const dto: CreateProjectDto = { name: 'New Project', description: 'Desc' };
+      const dto: CreateProjectDto = {
+        name: 'New Project',
+        description: 'Desc',
+      };
       const responseDto = makeResponseDto({ name: dto.name });
       mockProjectsService.create.mockResolvedValue(responseDto);
 
@@ -98,14 +109,21 @@ describe('ProjectsController', () => {
 
       const result = await controller.update('proj-uuid-1', dto);
 
-      expect(mockProjectsService.update).toHaveBeenCalledWith('proj-uuid-1', dto);
+      expect(mockProjectsService.update).toHaveBeenCalledWith(
+        'proj-uuid-1',
+        dto,
+      );
       expect(result).toBe(responseDto);
     });
 
     it('propaga NotFoundException (404) cuando el proyecto no existe', async () => {
-      mockProjectsService.update.mockRejectedValue(new NotFoundException('Project not found'));
+      mockProjectsService.update.mockRejectedValue(
+        new NotFoundException('Project not found'),
+      );
 
-      await expect(controller.update('nonexistent', { name: 'X' })).rejects.toThrow(NotFoundException);
+      await expect(
+        controller.update('nonexistent', { name: 'X' }),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -118,7 +136,9 @@ describe('ProjectsController', () => {
 
       const result = await controller.deactivate('proj-uuid-1');
 
-      expect(mockProjectsService.deactivate).toHaveBeenCalledWith('proj-uuid-1');
+      expect(mockProjectsService.deactivate).toHaveBeenCalledWith(
+        'proj-uuid-1',
+      );
       expect(result.status).toBe(ProjectStatus.INACTIVE);
     });
 
@@ -127,7 +147,9 @@ describe('ProjectsController', () => {
         new BadRequestException('Project is already inactive'),
       );
 
-      await expect(controller.deactivate('proj-uuid-1')).rejects.toThrow(BadRequestException);
+      await expect(controller.deactivate('proj-uuid-1')).rejects.toThrow(
+        BadRequestException,
+      );
     });
   });
 
@@ -141,58 +163,80 @@ describe('ProjectsController', () => {
 
       const result = await controller.assignDevelopers('proj-uuid-1', dto);
 
-      expect(mockProjectsService.assignDevelopers).toHaveBeenCalledWith('proj-uuid-1', dto);
+      expect(mockProjectsService.assignDevelopers).toHaveBeenCalledWith(
+        'proj-uuid-1',
+        dto,
+      );
       expect(result).toBe(responseDto);
     });
 
     it('propaga BadRequestException (400) cuando se asigna un usuario con rol incorrecto', async () => {
       mockProjectsService.assignDevelopers.mockRejectedValue(
-        new BadRequestException('Los siguientes usuarios no son developers activos: admin-id'),
+        new BadRequestException(
+          'Los siguientes usuarios no son developers activos: admin-id',
+        ),
       );
       const dto: AssignDevelopersDto = { developerIds: ['admin-id'] };
 
-      await expect(controller.assignDevelopers('proj-uuid-1', dto)).rejects.toThrow(BadRequestException);
+      await expect(
+        controller.assignDevelopers('proj-uuid-1', dto),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 
   // ── Metadatos de guards ─────────────────────────────────────────────────────
+
+  // Reflect.getMetadata necesita la referencia exacta a la función del método
+  // (ahí es donde el decorador @Roles adjunta la metadata) — .bind() crearía
+  // una función nueva sin esa metadata, así que no es una alternativa válida.
+  // Re-tipar el controller como Record<string, object> evita que TS vea estas
+  // propiedades como "métodos de clase con this" (lo que dispara unbound-method)
+  // sin alterar la referencia real que se le pasa a Reflect.getMetadata.
+  function getRolesMetadata(
+    methodName: keyof ProjectsController,
+  ): UserRole[] | undefined {
+    const proto = controller as unknown as Record<string, object>;
+    return Reflect.getMetadata('roles', proto[methodName]) as
+      | UserRole[]
+      | undefined;
+  }
 
   describe('RolesGuard metadata', () => {
     // @Roles se aplica por método, no a nivel de clase — la metadata vive en
     // cada handler (mismo patrón que tasks.controller.spec.ts), no en el
     // constructor del controller.
     it('el handler findAll tiene @Roles(UserRole.ADMIN)', () => {
-      const roles: UserRole[] = Reflect.getMetadata('roles', controller.findAll);
+      const roles = getRolesMetadata('findAll');
       expect(roles).toContain(UserRole.ADMIN);
     });
 
     it('el handler create tiene @Roles(UserRole.ADMIN)', () => {
-      const roles: UserRole[] = Reflect.getMetadata('roles', controller.create);
+      const roles = getRolesMetadata('create');
       expect(roles).toContain(UserRole.ADMIN);
     });
 
     it('el handler update tiene @Roles(UserRole.ADMIN)', () => {
-      const roles: UserRole[] = Reflect.getMetadata('roles', controller.update);
+      const roles = getRolesMetadata('update');
       expect(roles).toContain(UserRole.ADMIN);
     });
 
     it('el handler deactivate tiene @Roles(UserRole.ADMIN)', () => {
-      const roles: UserRole[] = Reflect.getMetadata('roles', controller.deactivate);
+      const roles = getRolesMetadata('deactivate');
       expect(roles).toContain(UserRole.ADMIN);
     });
 
     it('el handler reactivate tiene @Roles(UserRole.ADMIN)', () => {
-      const roles: UserRole[] = Reflect.getMetadata('roles', controller.reactivate);
+      const roles = getRolesMetadata('reactivate');
       expect(roles).toContain(UserRole.ADMIN);
     });
 
     it('el handler assignDevelopers tiene @Roles(UserRole.ADMIN)', () => {
-      const roles: UserRole[] = Reflect.getMetadata('roles', controller.assignDevelopers);
+      const roles = getRolesMetadata('assignDevelopers');
       expect(roles).toContain(UserRole.ADMIN);
     });
 
     it('el handler findMine no tiene @Roles (JWT-only)', () => {
-      const roles: UserRole[] | undefined = Reflect.getMetadata('roles', controller.findMine);
+      const roles = getRolesMetadata('findMine');
       expect(roles).toBeUndefined();
     });
   });

@@ -18,7 +18,9 @@ export class ProjectResponseDto {
     dto.name = project.name;
     dto.description = project.description ?? null;
     dto.status = project.status;
-    dto.developers = (project.developers ?? []).map(UserResponseDto.from);
+    dto.developers = (project.developers ?? []).map((developer) =>
+      UserResponseDto.from(developer),
+    );
     dto.createdAt = project.createdAt;
     dto.updatedAt = project.updatedAt;
     return dto;

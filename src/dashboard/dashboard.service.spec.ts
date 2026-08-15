@@ -2,10 +2,11 @@ import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ProjectAccessService } from '../projects/project-access.service';
-import { Project } from '../projects/projects.entity';
+import { Project, ProjectStatus } from '../projects/projects.entity';
 import { Task, TaskStatus } from '../tasks/tasks.entity';
 import { User, UserRole } from '../users/users.entity';
 import { DashboardService } from './dashboard.service';
+import { CompletionTrend, TrendPoint } from './dto/dashboard-overview.dto';
 
 // ── Helpers de fixture ─────────────────────────────────────────────────────────
 
@@ -28,7 +29,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     id: 'proj-uuid-1',
     name: 'Test Project',
     description: null,
-    status: 'active' as any,
+    status: ProjectStatus.ACTIVE,
     developers: [],
     createdAt: new Date('2024-01-01'),
     updatedAt: new Date('2024-01-01'),
@@ -40,32 +41,76 @@ function makeProject(overrides: Partial<Project> = {}): Project {
 // Encadena todos los métodos usados por DashboardService y resuelve con el valor
 // configurado en cada test vía las funciones terminales (getRawMany/getMany/getCount)
 
-function makeQueryBuilderMock() {
-  const qb: any = {
-    select: jest.fn().mockReturnThis(),
-    addSelect: jest.fn().mockReturnThis(),
-    where: jest.fn().mockReturnThis(),
-    andWhere: jest.fn().mockReturnThis(),
-    innerJoin: jest.fn().mockReturnThis(),
-    leftJoinAndSelect: jest.fn().mockReturnThis(),
-    groupBy: jest.fn().mockReturnThis(),
-    addGroupBy: jest.fn().mockReturnThis(),
-    orderBy: jest.fn().mockReturnThis(),
-    limit: jest.fn().mockReturnThis(),
-    setParameters: jest.fn().mockReturnThis(),
+type MockQueryBuilder = Record<
+  | 'select'
+  | 'addSelect'
+  | 'where'
+  | 'andWhere'
+  | 'innerJoin'
+  | 'leftJoinAndSelect'
+  | 'groupBy'
+  | 'addGroupBy'
+  | 'orderBy'
+  | 'limit'
+  | 'setParameters'
+  | 'getRawMany'
+  | 'getMany'
+  | 'getCount',
+  jest.Mock
+>;
+
+// Métodos encadenables (devuelven el propio qb); getRawMany/getMany/getCount son
+// terminales y resuelven el valor configurado en cada test.
+const CHAINABLE_QB_METHODS = [
+  'select',
+  'addSelect',
+  'where',
+  'andWhere',
+  'innerJoin',
+  'leftJoinAndSelect',
+  'groupBy',
+  'addGroupBy',
+  'orderBy',
+  'limit',
+  'setParameters',
+] as const;
+
+function makeQueryBuilderMock(): MockQueryBuilder {
+  const qb = {
+    select: jest.fn(),
+    addSelect: jest.fn(),
+    where: jest.fn(),
+    andWhere: jest.fn(),
+    innerJoin: jest.fn(),
+    leftJoinAndSelect: jest.fn(),
+    groupBy: jest.fn(),
+    addGroupBy: jest.fn(),
+    orderBy: jest.fn(),
+    limit: jest.fn(),
+    setParameters: jest.fn(),
     getRawMany: jest.fn().mockResolvedValue([]),
     getMany: jest.fn().mockResolvedValue([]),
     getCount: jest.fn().mockResolvedValue(0),
   };
+  for (const method of CHAINABLE_QB_METHODS) {
+    qb[method].mockReturnValue(qb);
+  }
   return qb;
 }
+
+type MockTasksRepository = { createQueryBuilder: jest.Mock };
+type MockProjectsRepository = {
+  find: jest.Mock;
+  findOne: jest.Mock;
+  createQueryBuilder: jest.Mock;
+};
 
 describe('DashboardService', () => {
   let service: DashboardService;
   let taskQb: ReturnType<typeof makeQueryBuilderMock>;
   let projectQb: ReturnType<typeof makeQueryBuilderMock>;
-  let mockTasksRepository: any;
-  let mockProjectsRepository: any;
+  let mockTasksRepository: MockTasksRepository;
+  let mockProjectsRepository: MockProjectsRepository;
   let mockProjectAccessService: { assertCanRead: jest.Mock };
 
   beforeEach(async () => {
@@ -347,8 +392,8 @@ describe('DashboardService', () => {
         overdueCount: 0,
         trend: expect.objectContaining({
           granularity: 'day',
-          points: expect.any(Array),
-        }),
+          points: expect.any(Array) as TrendPoint[],
+        }) as CompletionTrend,
       });
       expect(result.trend.points).toHaveLength(30);
       // ninguna query de tareas debe dispararse cuando no hay proyectos
@@ -425,8 +470,8 @@ describe('DashboardService', () => {
         overdueCount: 0,
         trend: expect.objectContaining({
           granularity: 'day',
-          points: expect.any(Array),
-        }),
+          points: expect.any(Array) as TrendPoint[],
+        }) as CompletionTrend,
       });
       expect(result.trend.points).toHaveLength(30);
       expect(result.trend.points.every((point) => point.count === 0)).toBe(

@@ -47,14 +47,20 @@ export class ProjectsService {
       .skip(skip)
       .take(take)
       .getManyAndCount();
-    return PaginatedResponseDto.from(projects.map(ProjectResponseDto.from), total, {
-      page,
-      limit,
-    });
+    return PaginatedResponseDto.from(
+      projects.map((project) => ProjectResponseDto.from(project)),
+      total,
+      {
+        page,
+        limit,
+      },
+    );
   }
 
   // Devuelve todos los proyectos con sus developers asociados, paginados
-  async findAll(query: PaginationQueryDto): Promise<PaginatedResponseDto<ProjectResponseDto>> {
+  async findAll(
+    query: PaginationQueryDto,
+  ): Promise<PaginatedResponseDto<ProjectResponseDto>> {
     const { page, limit, skip, take } = resolvePagination(query);
     const [projects, total] = await this.projectsRepository.findAndCount({
       relations: { developers: true },
@@ -62,10 +68,14 @@ export class ProjectsService {
       skip,
       take,
     });
-    return PaginatedResponseDto.from(projects.map(ProjectResponseDto.from), total, {
-      page,
-      limit,
-    });
+    return PaginatedResponseDto.from(
+      projects.map((project) => ProjectResponseDto.from(project)),
+      total,
+      {
+        page,
+        limit,
+      },
+    );
   }
 
   // Crea un nuevo proyecto con estado active por defecto
@@ -93,7 +103,8 @@ export class ProjectsService {
     if (!project) throw new NotFoundException('Project not found');
 
     if (dto.name !== undefined) project.name = dto.name;
-    if (dto.description !== undefined) project.description = dto.description ?? null;
+    if (dto.description !== undefined)
+      project.description = dto.description ?? null;
 
     const saved = await this.projectsRepository.save(project);
     return ProjectResponseDto.from(saved);
@@ -180,7 +191,9 @@ export class ProjectsService {
     // IDs removidos de la lista de developers: sus tareas no-done en este
     // proyecto deben perder el assigneeId, atómicamente con el cambio de membresía.
     const newDeveloperIds = new Set(newDevelopers.map((u) => u.id));
-    const removedIds = previousDeveloperIds.filter((uid) => !newDeveloperIds.has(uid));
+    const removedIds = previousDeveloperIds.filter(
+      (uid) => !newDeveloperIds.has(uid),
+    );
 
     await this.projectsRepository.manager.transaction(async (manager) => {
       project.developers = newDevelopers;
