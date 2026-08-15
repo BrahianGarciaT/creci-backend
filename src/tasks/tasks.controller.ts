@@ -8,12 +8,16 @@ import {
   Post,
   Query,
   UseGuards,
+  ValidationPipe,
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
+import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
+import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
 import { User, UserRole } from '../users/users.entity';
 import { CreateTaskDto } from './dto/create-task.dto';
+import { TaskListQueryDto } from './dto/task-list-query.dto';
 import { TaskResponseDto } from './dto/task-response.dto';
 import { UpdateEstimateDto } from './dto/update-estimate.dto';
 import { UpdateStatusDto } from './dto/update-status.dto';
@@ -35,22 +39,27 @@ export class TasksController {
     return this.tasksService.create(dto, currentUser);
   }
 
-  // GET /tasks — lista todas las tareas incluyendo canceladas (solo admin)
+  // GET /tasks — lista todas las tareas incluyendo canceladas, paginadas (solo admin)
   @Get()
   @Roles(UserRole.ADMIN)
-  findAll(@Query('projectId') projectId?: string): Promise<TaskResponseDto[]> {
-    return this.tasksService.findAll(projectId);
+  findAll(
+    @Query(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
+    query: TaskListQueryDto,
+  ): Promise<PaginatedResponseDto<TaskResponseDto>> {
+    return this.tasksService.findAll(query);
   }
 
-  // GET /tasks/project/:projectId — tareas no canceladas del proyecto para un developer miembro
+  // GET /tasks/project/:projectId — tareas no canceladas del proyecto para un developer miembro, paginadas
   // IMPORTANTE: debe registrarse ANTES de GET /tasks/:id para evitar que NestJS
   // interprete "project" como el valor del parámetro :id
   @Get('project/:projectId')
   findByProject(
     @Param('projectId') projectId: string,
     @CurrentUser() currentUser: User,
-  ): Promise<TaskResponseDto[]> {
-    return this.tasksService.findByProject(projectId, currentUser);
+    @Query(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
+    query: PaginationQueryDto,
+  ): Promise<PaginatedResponseDto<TaskResponseDto>> {
+    return this.tasksService.findByProject(projectId, currentUser, query);
   }
 
   // PATCH /tasks/:id — actualización parcial de cualquier campo (solo admin)

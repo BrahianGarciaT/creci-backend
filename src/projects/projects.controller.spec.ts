@@ -28,6 +28,7 @@ function makeResponseDto(overrides: Partial<ProjectResponseDto> = {}): ProjectRe
 
 const mockProjectsService = {
   findAll: jest.fn(),
+  findMine: jest.fn(),
   create: jest.fn(),
   update: jest.fn(),
   deactivate: jest.fn(),
@@ -60,14 +61,15 @@ describe('ProjectsController', () => {
   // ── GET /projects ───────────────────────────────────────────────────────────
 
   describe('findAll', () => {
-    it('llama a ProjectsService.findAll y devuelve el array', async () => {
+    it('llama a ProjectsService.findAll con la query de paginación y devuelve el envelope', async () => {
       const dtos = [makeResponseDto(), makeResponseDto({ id: 'proj-uuid-2', name: 'Another' })];
-      mockProjectsService.findAll.mockResolvedValue(dtos);
+      const paginated = { data: dtos, meta: { total: 2, page: 1, limit: 20, totalPages: 1 } };
+      mockProjectsService.findAll.mockResolvedValue(paginated);
 
-      const result = await controller.findAll();
+      const result = await controller.findAll({});
 
-      expect(mockProjectsService.findAll).toHaveBeenCalledTimes(1);
-      expect(result).toBe(dtos);
+      expect(mockProjectsService.findAll).toHaveBeenCalledWith({});
+      expect(result).toBe(paginated);
     });
   });
 

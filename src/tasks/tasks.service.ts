@@ -5,11 +5,15 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Not, Repository } from 'typeorm';
+import { FindOptionsWhere, Not, Repository } from 'typeorm';
+import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
+import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
+import { resolvePagination } from '../common/pagination';
 import { Project } from '../projects/projects.entity';
 import { ProjectAccessService } from '../projects/project-access.service';
 import { User } from '../users/users.entity';
 import { CreateTaskDto } from './dto/create-task.dto';
+import { TaskListQueryDto } from './dto/task-list-query.dto';
 import { TaskResponseDto } from './dto/task-response.dto';
 import { UpdateEstimateDto } from './dto/update-estimate.dto';
 import { UpdateStatusDto } from './dto/update-status.dto';
@@ -53,33 +57,44 @@ export class TasksService {
     return TaskResponseDto.from(saved);
   }
 
-  // Devuelve todas las tareas (incluyendo canceladas); opcionalmente filtra por proyecto.
+  // Devuelve todas las tareas (incluyendo canceladas), paginadas; opcionalmente filtra por proyecto.
   // Orden explícito por createdAt: sin ORDER BY, Postgres no garantiza orden estable y
   // un UPDATE puede reubicar la fila (MVCC), haciendo que la tarea "salte" de posición
-  // en el cliente justo al editarla.
-  async findAll(projectId?: string): Promise<TaskResponseDto[]> {
-    const where = projectId ? { projectId } : {};
-    const tasks = await this.tasksRepository.find({
+  // en el cliente justo al editarla. Ahora también load-bearing para la estabilidad
+  // de la paginación por offset entre páginas consecutivas.
+  async findAll(query: TaskListQueryDto): Promise<PaginatedResponseDto<TaskResponseDto>> {
+    const { page, limit, skip, take } = resolvePagination(query);
+    const where: FindOptionsWhere<Task> = query.projectId ? { projectId: query.projectId } : {};
+    const [tasks, total] = await this.tasksRepository.findAndCount({
       where,
       relations: { project: true, assignee: true },
       order: { createdAt: 'ASC' },
+      skip,
+      take,
     });
-    return tasks.map(TaskResponseDto.from);
+    return PaginatedResponseDto.from(tasks.map(TaskResponseDto.from), total, { page, limit });
   }
 
-  // Devuelve tareas no canceladas de un proyecto; verifica que el usuario sea miembro del proyecto
-  async findByProject(projectId: string, currentUser: User): Promise<TaskResponseDto[]> {
+  // Devuelve tareas no canceladas de un proyecto, paginadas; verifica que el usuario sea miembro del proyecto
+  async findByProject(
+    projectId: string,
+    currentUser: User,
+    query: PaginationQueryDto,
+  ): Promise<PaginatedResponseDto<TaskResponseDto>> {
     await this.projectAccessService.assertCanRead(projectId, currentUser, { allowAdmin: false });
 
-    const tasks = await this.tasksRepository.find({
+    const { page, limit, skip, take } = resolvePagination(query);
+    const [tasks, total] = await this.tasksRepository.findAndCount({
       where: {
         projectId,
         status: Not(TaskStatus.CANCELLED),
       },
       relations: { project: true, assignee: true },
       order: { createdAt: 'ASC' },
+      skip,
+      take,
     });
-    return tasks.map(TaskResponseDto.from);
+    return PaginatedResponseDto.from(tasks.map(TaskResponseDto.from), total, { page, limit });
   }
 
   // Carga el proyecto con sus developers y valida que el asignado (si hay) sea miembro

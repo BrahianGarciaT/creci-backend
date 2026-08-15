@@ -5,6 +5,9 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
+import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
+import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
+import { resolvePagination } from '../common/pagination';
 import { clearAssigneeForRemovedDevelopers } from '../tasks/tasks-assignee-cascade';
 import { UserRole } from '../users/users.entity';
 import { User } from '../users/users.entity';
@@ -23,28 +26,46 @@ export class ProjectsService {
     private readonly usersRepository: Repository<User>,
   ) {}
 
-  // Devuelve los proyectos donde el usuario autenticado es developer.
+  // Devuelve los proyectos donde el usuario autenticado es developer, paginados.
   // Orden explícito por createdAt: sin ORDER BY, Postgres no garantiza orden
   // estable y un UPDATE puede reubicar la fila (MVCC) — mismo bug ya
-  // corregido en tasks.service.ts.
-  async findMine(userId: string): Promise<ProjectResponseDto[]> {
-    const projects = await this.projectsRepository
+  // corregido en tasks.service.ts. Ahora también load-bearing para la
+  // estabilidad de la paginación por offset entre páginas consecutivas.
+  // skip/take (no limit/offset) porque el join a developers es a-muchos:
+  // paginar filas crudas rompería el conteo de entidades por página.
+  async findMine(
+    userId: string,
+    query: PaginationQueryDto,
+  ): Promise<PaginatedResponseDto<ProjectResponseDto>> {
+    const { page, limit, skip, take } = resolvePagination(query);
+    const [projects, total] = await this.projectsRepository
       .createQueryBuilder('project')
       .innerJoin('project.developers', 'dev', 'dev.id = :userId', { userId })
       .leftJoinAndSelect('project.developers', 'developer')
       .where('project.status = :status', { status: ProjectStatus.ACTIVE })
       .orderBy('project.createdAt', 'ASC')
-      .getMany();
-    return projects.map(ProjectResponseDto.from);
+      .skip(skip)
+      .take(take)
+      .getManyAndCount();
+    return PaginatedResponseDto.from(projects.map(ProjectResponseDto.from), total, {
+      page,
+      limit,
+    });
   }
 
-  // Devuelve todos los proyectos con sus developers asociados
-  async findAll(): Promise<ProjectResponseDto[]> {
-    const projects = await this.projectsRepository.find({
+  // Devuelve todos los proyectos con sus developers asociados, paginados
+  async findAll(query: PaginationQueryDto): Promise<PaginatedResponseDto<ProjectResponseDto>> {
+    const { page, limit, skip, take } = resolvePagination(query);
+    const [projects, total] = await this.projectsRepository.findAndCount({
       relations: { developers: true },
       order: { createdAt: 'ASC' },
+      skip,
+      take,
     });
-    return projects.map(ProjectResponseDto.from);
+    return PaginatedResponseDto.from(projects.map(ProjectResponseDto.from), total, {
+      page,
+      limit,
+    });
   }
 
   // Crea un nuevo proyecto con estado active por defecto
