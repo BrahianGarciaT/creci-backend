@@ -22,7 +22,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     createdAt: new Date('2024-01-01'),
     updatedAt: new Date('2024-01-01'),
     ...overrides,
-  } as Project;
+  };
 }
 
 function makeUser(overrides: Partial<User> = {}): User {
@@ -37,7 +37,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     createdAt: new Date('2024-01-01'),
     updatedAt: new Date('2024-01-01'),
     ...overrides,
-  } as User;
+  };
 }
 
 // ── Mocks de repositorios ───────────────────────────────────────────────────────
@@ -55,7 +55,9 @@ const mockProjectsRepository = {
   save: jest.fn(),
   createQueryBuilder: jest.fn(),
   manager: {
-    transaction: jest.fn((cb: (manager: typeof mockManager) => unknown) => cb(mockManager)),
+    transaction: jest.fn((cb: (manager: typeof mockManager) => unknown) =>
+      cb(mockManager),
+    ),
   },
 };
 
@@ -66,13 +68,26 @@ const mockUsersRepository = {
 // QB mock chainable auto-referente; usado por findMine (join a-muchos, requiere
 // getManyAndCount para paginar entidades, no filas crudas). No hay precedente
 // de este patrón en el repo — se colocaliza aquí per diseño.
-function makeQueryBuilderMock(result: [Project[], number]) {
-  const qb: Record<string, jest.Mock> = {};
-  for (const method of ['innerJoin', 'leftJoinAndSelect', 'where', 'orderBy', 'skip', 'take']) {
+type MockQueryBuilder = Record<
+  'innerJoin' | 'leftJoinAndSelect' | 'where' | 'orderBy' | 'skip' | 'take',
+  jest.Mock
+> & { getManyAndCount: jest.Mock };
+
+function makeQueryBuilderMock(result: [Project[], number]): MockQueryBuilder {
+  const qb = {} as MockQueryBuilder;
+  const chainableMethods = [
+    'innerJoin',
+    'leftJoinAndSelect',
+    'where',
+    'orderBy',
+    'skip',
+    'take',
+  ] as const;
+  for (const method of chainableMethods) {
     qb[method] = jest.fn(() => qb);
   }
-  (qb as any).getManyAndCount = jest.fn().mockResolvedValue(result);
-  return qb as any;
+  qb.getManyAndCount = jest.fn().mockResolvedValue(result);
+  return qb;
 }
 
 // ── Suite principal ────────────────────────────────────────────────────────────
@@ -104,7 +119,10 @@ describe('ProjectsService', () => {
 
   describe('findAll', () => {
     it('devuelve la lista paginada de proyectos mapeados a ProjectResponseDto', async () => {
-      const projects = [makeProject(), makeProject({ id: 'proj-uuid-2', name: 'Another' })];
+      const projects = [
+        makeProject(),
+        makeProject({ id: 'proj-uuid-2', name: 'Another' }),
+      ];
       mockProjectsRepository.findAndCount.mockResolvedValue([projects, 2]);
 
       const result = await service.findAll({});
@@ -117,7 +135,12 @@ describe('ProjectsService', () => {
       });
       expect(result.data).toHaveLength(2);
       expect(result.data[0].id).toBe('proj-uuid-1');
-      expect(result.meta).toEqual({ total: 2, page: 1, limit: 20, totalPages: 1 });
+      expect(result.meta).toEqual({
+        total: 2,
+        page: 1,
+        limit: 20,
+        totalPages: 1,
+      });
     });
 
     it('devuelve data vacía cuando no hay proyectos', async () => {
@@ -145,7 +168,12 @@ describe('ProjectsService', () => {
       const result = await service.findAll({ page: 5, limit: 20 });
 
       expect(result.data).toEqual([]);
-      expect(result.meta).toEqual({ total: 3, page: 5, limit: 20, totalPages: 1 });
+      expect(result.meta).toEqual({
+        total: 3,
+        page: 5,
+        limit: 20,
+        totalPages: 1,
+      });
     });
   });
 
@@ -159,14 +187,24 @@ describe('ProjectsService', () => {
 
       const result = await service.findMine('user-uuid-1', {});
 
-      expect(qb.innerJoin).toHaveBeenCalledWith('project.developers', 'dev', 'dev.id = :userId', {
-        userId: 'user-uuid-1',
-      });
+      expect(qb.innerJoin).toHaveBeenCalledWith(
+        'project.developers',
+        'dev',
+        'dev.id = :userId',
+        {
+          userId: 'user-uuid-1',
+        },
+      );
       expect(qb.orderBy).toHaveBeenCalledWith('project.createdAt', 'ASC');
       expect(qb.skip).toHaveBeenCalledWith(0);
       expect(qb.take).toHaveBeenCalledWith(20);
       expect(result.data).toHaveLength(1);
-      expect(result.meta).toEqual({ total: 1, page: 1, limit: 20, totalPages: 1 });
+      expect(result.meta).toEqual({
+        total: 1,
+        page: 1,
+        limit: 20,
+        totalPages: 1,
+      });
     });
 
     it('aplica skip/take derivados de page/limit provistos', async () => {
@@ -184,7 +222,10 @@ describe('ProjectsService', () => {
 
   describe('create', () => {
     it('persiste el proyecto y devuelve ProjectResponseDto', async () => {
-      const dto: CreateProjectDto = { name: 'New Project', description: 'Desc' };
+      const dto: CreateProjectDto = {
+        name: 'New Project',
+        description: 'Desc',
+      };
       const created = makeProject();
       const savedWithRelations = makeProject({ developers: [] });
 
@@ -208,7 +249,9 @@ describe('ProjectsService', () => {
       const created = makeProject({ description: null });
       mockProjectsRepository.create.mockReturnValue(created);
       mockProjectsRepository.save.mockResolvedValue(created);
-      mockProjectsRepository.findOne.mockResolvedValue(makeProject({ description: null }));
+      mockProjectsRepository.findOne.mockResolvedValue(
+        makeProject({ description: null }),
+      );
 
       const result = await service.create(dto);
 
@@ -235,7 +278,9 @@ describe('ProjectsService', () => {
     it('lanza NotFoundException (404) cuando el proyecto no existe', async () => {
       mockProjectsRepository.findOne.mockResolvedValue(null);
 
-      await expect(service.update('nonexistent', { name: 'X' })).rejects.toThrow(NotFoundException);
+      await expect(
+        service.update('nonexistent', { name: 'X' }),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -258,13 +303,17 @@ describe('ProjectsService', () => {
       const project = makeProject({ status: ProjectStatus.INACTIVE });
       mockProjectsRepository.findOne.mockResolvedValue(project);
 
-      await expect(service.deactivate('proj-uuid-1')).rejects.toThrow(BadRequestException);
+      await expect(service.deactivate('proj-uuid-1')).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('lanza NotFoundException (404) cuando el proyecto no existe', async () => {
       mockProjectsRepository.findOne.mockResolvedValue(null);
 
-      await expect(service.deactivate('nonexistent')).rejects.toThrow(NotFoundException);
+      await expect(service.deactivate('nonexistent')).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 
@@ -311,7 +360,9 @@ describe('ProjectsService', () => {
 
       const dto: AssignDevelopersDto = { developerIds: ['nonexistent-id'] };
 
-      await expect(service.assignDevelopers('proj-uuid-1', dto)).rejects.toThrow(BadRequestException);
+      await expect(
+        service.assignDevelopers('proj-uuid-1', dto),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('lanza BadRequestException (400) si un usuario tiene rol ADMIN', async () => {
@@ -323,7 +374,9 @@ describe('ProjectsService', () => {
 
       const dto: AssignDevelopersDto = { developerIds: [adminUser.id] };
 
-      await expect(service.assignDevelopers('proj-uuid-1', dto)).rejects.toThrow(BadRequestException);
+      await expect(
+        service.assignDevelopers('proj-uuid-1', dto),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('lanza BadRequestException (400) si un usuario está inactivo', async () => {
@@ -335,7 +388,9 @@ describe('ProjectsService', () => {
 
       const dto: AssignDevelopersDto = { developerIds: [inactiveUser.id] };
 
-      await expect(service.assignDevelopers('proj-uuid-1', dto)).rejects.toThrow(BadRequestException);
+      await expect(
+        service.assignDevelopers('proj-uuid-1', dto),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('lanza NotFoundException (404) cuando el proyecto no existe', async () => {
@@ -343,7 +398,9 @@ describe('ProjectsService', () => {
 
       const dto: AssignDevelopersDto = { developerIds: [] };
 
-      await expect(service.assignDevelopers('nonexistent', dto)).rejects.toThrow(NotFoundException);
+      await expect(
+        service.assignDevelopers('nonexistent', dto),
+      ).rejects.toThrow(NotFoundException);
     });
 
     // ── cascada de assigneeId al remover developers ────────────────────────────
@@ -364,7 +421,9 @@ describe('ProjectsService', () => {
       const dto: AssignDevelopersDto = { developerIds: ['user-kept'] };
       await service.assignDevelopers('proj-uuid-1', dto);
 
-      expect(mockProjectsRepository.manager.transaction).toHaveBeenCalledTimes(1);
+      expect(mockProjectsRepository.manager.transaction).toHaveBeenCalledTimes(
+        1,
+      );
       expect(mockManager.save).toHaveBeenCalledTimes(1);
       expect(mockManager.update).toHaveBeenCalledWith(
         Task,
@@ -400,7 +459,10 @@ describe('ProjectsService', () => {
 
     it('scoping: la cascada solo afecta al proyecto sobre el que se llamó assignDevelopers', async () => {
       const removedDev = makeUser({ id: 'user-removed' });
-      const project = makeProject({ id: 'proj-scoped', developers: [removedDev] });
+      const project = makeProject({
+        id: 'proj-scoped',
+        developers: [removedDev],
+      });
       const withRelations = makeProject({ id: 'proj-scoped', developers: [] });
 
       mockProjectsRepository.findOne
@@ -428,14 +490,19 @@ describe('ProjectsService', () => {
 
       const dto: AssignDevelopersDto = { developerIds: [] };
 
-      await expect(service.assignDevelopers('proj-uuid-1', dto)).rejects.toThrow('DB write failed');
+      await expect(
+        service.assignDevelopers('proj-uuid-1', dto),
+      ).rejects.toThrow('DB write failed');
       // El fallo dentro de manager.save ocurre antes de la cascada: update no debe llamarse
       expect(mockManager.update).not.toHaveBeenCalled();
     });
 
     it('developerIds vacío (early-return branch): también dispara la cascada transaccional', async () => {
       const removedDev1 = makeUser({ id: 'user-removed-1' });
-      const removedDev2 = makeUser({ id: 'user-removed-2', email: 'r2@example.com' });
+      const removedDev2 = makeUser({
+        id: 'user-removed-2',
+        email: 'r2@example.com',
+      });
       const project = makeProject({ developers: [removedDev1, removedDev2] });
       const withRelations = makeProject({ developers: [] });
 
@@ -450,7 +517,9 @@ describe('ProjectsService', () => {
 
       // No debe consultar usersRepository en la rama de vaciado
       expect(mockUsersRepository.find).not.toHaveBeenCalled();
-      expect(mockProjectsRepository.manager.transaction).toHaveBeenCalledTimes(1);
+      expect(mockProjectsRepository.manager.transaction).toHaveBeenCalledTimes(
+        1,
+      );
       expect(mockManager.update).toHaveBeenCalledWith(
         Task,
         expect.objectContaining({

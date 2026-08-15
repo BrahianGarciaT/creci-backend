@@ -18,7 +18,9 @@ export interface ResolvedPagination {
 }
 
 // Resuelve page/limit con sus defaults y deriva skip/take para TypeORM.
-export function resolvePagination(query: PaginationQueryLike): ResolvedPagination {
+export function resolvePagination(
+  query: PaginationQueryLike,
+): ResolvedPagination {
   const page = query.page ?? DEFAULT_PAGE;
   const limit = query.limit ?? DEFAULT_LIMIT;
   return {

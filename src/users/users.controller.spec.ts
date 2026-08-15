@@ -1,7 +1,4 @@
-import {
-  ForbiddenException,
-  NotFoundException,
-} from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { RolesGuard } from '../auth/roles.guard';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -13,7 +10,9 @@ import { UsersService } from './users.service';
 
 // ── Helpers de fixture ─────────────────────────────────────────────────────────
 
-function makeResponseDto(overrides: Partial<UserResponseDto> = {}): UserResponseDto {
+function makeResponseDto(
+  overrides: Partial<UserResponseDto> = {},
+): UserResponseDto {
   const dto = new UserResponseDto();
   dto.id = 'uuid-1';
   dto.email = 'dev@example.com';
@@ -35,7 +34,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     createdAt: new Date('2024-01-01'),
     updatedAt: new Date('2024-01-01'),
     ...overrides,
-  } as User;
+  };
 }
 
 // ── Mock del servicio ───────────────────────────────────────────────────────────
@@ -147,9 +146,13 @@ describe('UsersController', () => {
     });
 
     it('propaga NotFoundException (404) cuando el id no existe', async () => {
-      mockUsersService.update.mockRejectedValue(new NotFoundException('User not found'));
+      mockUsersService.update.mockRejectedValue(
+        new NotFoundException('User not found'),
+      );
 
-      await expect(controller.update('nonexistent', {})).rejects.toThrow(NotFoundException);
+      await expect(controller.update('nonexistent', {})).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 
@@ -183,7 +186,9 @@ describe('UsersController', () => {
         new ForbiddenException('Admin accounts cannot be deactivated'),
       );
 
-      await expect(controller.deactivate('admin-uuid', actor)).rejects.toThrow(ForbiddenException);
+      await expect(controller.deactivate('admin-uuid', actor)).rejects.toThrow(
+        ForbiddenException,
+      );
     });
 
     it('propaga NotFoundException (404) cuando el id no existe', async () => {
@@ -191,7 +196,9 @@ describe('UsersController', () => {
         new NotFoundException('User not found'),
       );
 
-      await expect(controller.deactivate('nonexistent', actor)).rejects.toThrow(NotFoundException);
+      await expect(controller.deactivate('nonexistent', actor)).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 });

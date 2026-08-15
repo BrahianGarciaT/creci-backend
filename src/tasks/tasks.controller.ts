@@ -32,18 +32,21 @@ export class TasksController {
   // POST /tasks — crea una tarea (solo admin)
   @Post()
   @Roles(UserRole.ADMIN)
-  create(
-    @Body() dto: CreateTaskDto,
-    @CurrentUser() currentUser: User,
-  ): Promise<TaskResponseDto> {
-    return this.tasksService.create(dto, currentUser);
+  create(@Body() dto: CreateTaskDto): Promise<TaskResponseDto> {
+    return this.tasksService.create(dto);
   }
 
   // GET /tasks — lista todas las tareas incluyendo canceladas, paginadas (solo admin)
   @Get()
   @Roles(UserRole.ADMIN)
   findAll(
-    @Query(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
+    @Query(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
     query: TaskListQueryDto,
   ): Promise<PaginatedResponseDto<TaskResponseDto>> {
     return this.tasksService.findAll(query);
@@ -56,7 +59,13 @@ export class TasksController {
   findByProject(
     @Param('projectId') projectId: string,
     @CurrentUser() currentUser: User,
-    @Query(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
+    @Query(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
     query: PaginationQueryDto,
   ): Promise<PaginatedResponseDto<TaskResponseDto>> {
     return this.tasksService.findByProject(projectId, currentUser, query);
