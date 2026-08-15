@@ -64,7 +64,10 @@ export class TasksService {
   // de la paginación por offset entre páginas consecutivas.
   async findAll(query: TaskListQueryDto): Promise<PaginatedResponseDto<TaskResponseDto>> {
     const { page, limit, skip, take } = resolvePagination(query);
-    const where: FindOptionsWhere<Task> = query.projectId ? { projectId: query.projectId } : {};
+    const where: FindOptionsWhere<Task> = {};
+    if (query.projectId) where.projectId = query.projectId;
+    if (query.status) where.status = query.status;
+    if (query.priority) where.priority = query.priority;
     const [tasks, total] = await this.tasksRepository.findAndCount({
       where,
       relations: { project: true, assignee: true },
