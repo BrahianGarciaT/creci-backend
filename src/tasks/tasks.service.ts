@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { PinoLogger } from 'nestjs-pino';
 import { FindOptionsWhere, Not, Repository } from 'typeorm';
 import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
@@ -30,7 +31,10 @@ export class TasksService {
     @InjectRepository(User)
     private readonly usersRepository: Repository<User>,
     private readonly projectAccessService: ProjectAccessService,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(TasksService.name);
+  }
 
   // Crea una tarea; valida que el proyecto exista y opcionalmente carga el asignado
   async create(dto: CreateTaskDto): Promise<TaskResponseDto> {
@@ -57,6 +61,10 @@ export class TasksService {
     });
 
     const saved = await this.tasksRepository.save(task);
+    this.logger.info(
+      { taskId: saved.id, projectId: saved.projectId },
+      'Task created',
+    );
     return TaskResponseDto.from(saved);
   }
 
@@ -221,6 +229,7 @@ export class TasksService {
     if (dto.assigneeId !== undefined) task.assigneeId = dto.assigneeId ?? null;
 
     const saved = await this.tasksRepository.save(task);
+    this.logger.info({ taskId: id }, 'Task updated');
     return TaskResponseDto.from(saved);
   }
 
@@ -247,9 +256,14 @@ export class TasksService {
 
     this.assertStatusTransitionAllowed(task.status, dto.status);
 
+    const previousStatus = task.status;
     this.stampCompletionIfNeeded(task, dto.status);
     task.status = dto.status;
     const saved = await this.tasksRepository.save(task);
+    this.logger.info(
+      { taskId: id, from: previousStatus, to: dto.status, userId: currentUser.id },
+      'Task status changed',
+    );
     return TaskResponseDto.from(saved);
   }
 
@@ -286,6 +300,7 @@ export class TasksService {
 
     task.status = TaskStatus.CANCELLED;
     const saved = await this.tasksRepository.save(task);
+    this.logger.info({ taskId: id }, 'Task cancelled');
     return TaskResponseDto.from(saved);
   }
 }

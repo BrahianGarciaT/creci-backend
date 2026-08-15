@@ -1,7 +1,15 @@
 import { plainToInstance } from 'class-transformer';
-import { IsInt, IsString, validateSync } from 'class-validator';
+import { IsInt, IsOptional, IsString, validateSync } from 'class-validator';
 
 class EnvironmentVariables {
+  @IsOptional()
+  @IsString()
+  NODE_ENV?: string;
+
+  @IsOptional()
+  @IsString()
+  LOG_LEVEL?: string;
+
   @IsString()
   DB_HOST: string;
 

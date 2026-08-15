@@ -9,6 +9,7 @@ import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
+import { PinoLogger } from 'nestjs-pino';
 import { In, Not } from 'typeorm';
 import { JwtStrategy } from '../auth/jwt.strategy';
 import { Project, ProjectStatus } from '../projects/projects.entity';
@@ -93,6 +94,14 @@ const mockRepository = {
   },
 };
 
+const mockLogger = {
+  setContext: jest.fn(),
+  info: jest.fn(),
+  warn: jest.fn(),
+  debug: jest.fn(),
+  error: jest.fn(),
+};
+
 // ── Suite principal ────────────────────────────────────────────────────────────
 
 describe('UsersService', () => {
@@ -103,6 +112,7 @@ describe('UsersService', () => {
       providers: [
         UsersService,
         { provide: getRepositoryToken(User), useValue: mockRepository },
+        { provide: PinoLogger, useValue: mockLogger },
       ],
     }).compile();
 

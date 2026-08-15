@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
+import { PinoLogger } from 'nestjs-pino';
 import { EntityManager, Repository } from 'typeorm';
 import { Project } from '../projects/projects.entity';
 import { clearAssigneeForRemovedDevelopers } from '../tasks/tasks-assignee-cascade';
@@ -23,7 +24,10 @@ export class UsersService {
   constructor(
     @InjectRepository(User)
     private readonly usersRepository: Repository<User>,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(UsersService.name);
+  }
 
   findByEmail(email: string): Promise<User | null> {
     return this.usersRepository.findOne({ where: { email } });
@@ -55,6 +59,10 @@ export class UsersService {
 
     try {
       const saved = await this.usersRepository.save(user);
+      this.logger.info(
+        { userId: saved.id, role: saved.role },
+        'User created',
+      );
       return UserResponseDto.from(saved);
     } catch (error: unknown) {
       // Violación de restricción unique de Postgres (defensa en profundidad)
@@ -144,6 +152,8 @@ export class UsersService {
       await manager.update(User, id, { isActive: false });
     });
 
+    this.logger.info({ userId: id, actorId: actor.id }, 'User deactivated');
+
     const updated = await this.usersRepository.findOne({
       where: { id },
       relations: { projects: true },
@@ -184,6 +194,13 @@ export class UsersService {
       if (Object.keys(changes).length > 0) {
         await manager.update(User, id, changes);
       }
+
+      if (dto.role !== undefined) {
+        this.logger.info({ userId: id, role: dto.role }, 'User role changed');
+      }
+      if (dto.password !== undefined) {
+        this.logger.info({ userId: id }, 'User password reset');
+      }
     });
 
     const updated = await this.usersRepository.findOne({
@@ -203,6 +220,7 @@ export class UsersService {
       throw new BadRequestException('User is already active');
     }
     await this.usersRepository.update(id, { isActive: true });
+    this.logger.info({ userId: id }, 'User reactivated');
 
     const updated = await this.usersRepository.findOne({
       where: { id },

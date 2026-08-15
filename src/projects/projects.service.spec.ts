@@ -1,6 +1,7 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { PinoLogger } from 'nestjs-pino';
 import { In, Not } from 'typeorm';
 import { Task, TaskStatus } from '../tasks/tasks.entity';
 import { User, UserRole } from '../users/users.entity';
@@ -65,6 +66,14 @@ const mockUsersRepository = {
   find: jest.fn(),
 };
 
+const mockLogger = {
+  setContext: jest.fn(),
+  info: jest.fn(),
+  warn: jest.fn(),
+  debug: jest.fn(),
+  error: jest.fn(),
+};
+
 // QB mock chainable auto-referente; usado por findMine (join a-muchos, requiere
 // getManyAndCount para paginar entidades, no filas crudas). No hay precedente
 // de este patrón en el repo — se colocaliza aquí per diseño.
@@ -107,6 +116,7 @@ describe('ProjectsService', () => {
           provide: getRepositoryToken(User),
           useValue: mockUsersRepository,
         },
+        { provide: PinoLogger, useValue: mockLogger },
       ],
     }).compile();
 

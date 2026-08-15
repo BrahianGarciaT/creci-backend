@@ -12,10 +12,12 @@ import { Task } from './tasks/tasks.entity';
 import { TasksModule } from './tasks/tasks.module';
 import { User } from './users/users.entity';
 import { UsersModule } from './users/users.module';
+import { LoggerModule } from './logger/logger.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, validate }),
+    LoggerModule,
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({

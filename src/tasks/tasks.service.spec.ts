@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { PinoLogger } from 'nestjs-pino';
 import { FindManyOptions } from 'typeorm';
 import { Project, ProjectStatus } from '../projects/projects.entity';
 import { ProjectAccessService } from '../projects/project-access.service';
@@ -79,6 +80,14 @@ const mockProjectsRepository = {
   findOne: jest.fn(),
 };
 
+const mockLogger = {
+  setContext: jest.fn(),
+  info: jest.fn(),
+  warn: jest.fn(),
+  debug: jest.fn(),
+  error: jest.fn(),
+};
+
 const mockUsersRepository = {
   findOne: jest.fn(),
 };
@@ -103,6 +112,7 @@ describe('TasksService', () => {
         },
         { provide: getRepositoryToken(User), useValue: mockUsersRepository },
         { provide: ProjectAccessService, useValue: mockProjectAccessService },
+        { provide: PinoLogger, useValue: mockLogger },
       ],
     }).compile();
 

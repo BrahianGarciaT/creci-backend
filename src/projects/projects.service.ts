@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { PinoLogger } from 'nestjs-pino';
 import { In, Repository } from 'typeorm';
 import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
@@ -24,7 +25,10 @@ export class ProjectsService {
     private readonly projectsRepository: Repository<Project>,
     @InjectRepository(User)
     private readonly usersRepository: Repository<User>,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(ProjectsService.name);
+  }
 
   // Devuelve los proyectos donde el usuario autenticado es developer, paginados.
   // Orden explícito por createdAt: sin ORDER BY, Postgres no garantiza orden
@@ -86,6 +90,10 @@ export class ProjectsService {
       developers: [],
     });
     const saved = await this.projectsRepository.save(project);
+    this.logger.info(
+      { projectId: saved.id, name: saved.name },
+      'Project created',
+    );
     // Recarga con relaciones para consistencia en la respuesta
     const withRelations = await this.projectsRepository.findOne({
       where: { id: saved.id },
@@ -124,6 +132,7 @@ export class ProjectsService {
 
     project.status = ProjectStatus.INACTIVE;
     const saved = await this.projectsRepository.save(project);
+    this.logger.info({ projectId: id }, 'Project deactivated');
     return ProjectResponseDto.from(saved);
   }
 
@@ -139,6 +148,7 @@ export class ProjectsService {
     }
     project.status = ProjectStatus.ACTIVE;
     const saved = await this.projectsRepository.save(project);
+    this.logger.info({ projectId: id }, 'Project reactivated');
     return ProjectResponseDto.from(saved);
   }
 
@@ -200,6 +210,15 @@ export class ProjectsService {
       await manager.save(project);
       await clearAssigneeForRemovedDevelopers(manager, [id], removedIds);
     });
+
+    this.logger.info(
+      {
+        projectId: id,
+        developerIds: dto.developerIds,
+        removedIds,
+      },
+      'Project developers reassigned',
+    );
 
     // Recarga para incluir las relaciones completas en la respuesta
     const withRelations = await this.projectsRepository.findOne({

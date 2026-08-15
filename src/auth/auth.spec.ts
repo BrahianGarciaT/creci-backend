@@ -2,6 +2,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Test, TestingModule } from '@nestjs/testing';
 import * as bcrypt from 'bcrypt';
+import { PinoLogger } from 'nestjs-pino';
 import { User, UserRole } from '../users/users.entity';
 import { UsersService } from '../users/users.service';
 import { AuthService } from './auth.service';
@@ -39,6 +40,14 @@ const mockJwtService: MockedJwtService = {
   signAsync: jest.fn(),
 };
 
+const mockLogger = {
+  setContext: jest.fn(),
+  info: jest.fn(),
+  warn: jest.fn(),
+  debug: jest.fn(),
+  error: jest.fn(),
+};
+
 describe('AuthService', () => {
   let service: AuthService;
   let usersService: MockedUsersService;
@@ -54,6 +63,7 @@ describe('AuthService', () => {
           provide: ConfigService,
           useValue: { getOrThrow: jest.fn().mockReturnValue('mock-value') },
         },
+        { provide: PinoLogger, useValue: mockLogger },
       ],
     }).compile();
 
