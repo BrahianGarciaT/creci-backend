@@ -69,6 +69,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
 const mockTasksRepository = {
   find: jest.fn(),
   findOne: jest.fn(),
+  findAndCount: jest.fn(),
   create: jest.fn(),
   save: jest.fn(),
 };
@@ -226,56 +227,82 @@ describe('TasksService', () => {
   // ── findAll ─────────────────────────────────────────────────────────────────
 
   describe('findAll', () => {
-    it('devuelve todas las tareas incluyendo canceladas', async () => {
+    it('devuelve todas las tareas incluyendo canceladas, paginadas', async () => {
       const tasks = [
         makeTask({ status: TaskStatus.DONE }),
         makeTask({ id: 'task-uuid-2', status: TaskStatus.CANCELLED }),
       ];
-      mockTasksRepository.find.mockResolvedValue(tasks);
+      mockTasksRepository.findAndCount.mockResolvedValue([tasks, 2]);
 
-      const result = await service.findAll();
+      const result = await service.findAll({});
 
-      expect(mockTasksRepository.find).toHaveBeenCalledWith({
+      expect(mockTasksRepository.findAndCount).toHaveBeenCalledWith({
         where: {},
         relations: { project: true, assignee: true },
         order: { createdAt: 'ASC' },
+        skip: 0,
+        take: 20,
       });
-      expect(result).toHaveLength(2);
+      expect(result.data).toHaveLength(2);
+      expect(result.meta).toEqual({ total: 2, page: 1, limit: 20, totalPages: 1 });
     });
 
     it('filtra por projectId cuando se provee', async () => {
-      mockTasksRepository.find.mockResolvedValue([makeTask()]);
+      mockTasksRepository.findAndCount.mockResolvedValue([[makeTask()], 1]);
 
-      await service.findAll('proj-uuid-1');
+      await service.findAll({ projectId: 'proj-uuid-1' });
 
-      expect(mockTasksRepository.find).toHaveBeenCalledWith({
+      expect(mockTasksRepository.findAndCount).toHaveBeenCalledWith({
         where: { projectId: 'proj-uuid-1' },
         relations: { project: true, assignee: true },
         order: { createdAt: 'ASC' },
+        skip: 0,
+        take: 20,
       });
+    });
+
+    it('aplica skip/take derivados de page/limit provistos (page=2, limit=20 → items 21-40)', async () => {
+      mockTasksRepository.findAndCount.mockResolvedValue([[], 50]);
+
+      const result = await service.findAll({ page: 2, limit: 20 });
+
+      expect(mockTasksRepository.findAndCount).toHaveBeenCalledWith(
+        expect.objectContaining({ skip: 20, take: 20 }),
+      );
+      expect(result.meta.page).toBe(2);
+    });
+
+    it('data:[] con meta.total preciso cuando page excede totalPages (sin clamping)', async () => {
+      mockTasksRepository.findAndCount.mockResolvedValue([[], 3]);
+
+      const result = await service.findAll({ page: 5, limit: 20 });
+
+      expect(result.data).toEqual([]);
+      expect(result.meta).toEqual({ total: 3, page: 5, limit: 20, totalPages: 1 });
     });
   });
 
   // ── findByProject ────────────────────────────────────────────────────────────
 
   describe('findByProject', () => {
-    it('devuelve tareas no canceladas cuando el usuario es miembro', async () => {
+    it('devuelve tareas no canceladas paginadas cuando el usuario es miembro', async () => {
       const dev = makeUser();
       const tasks = [makeTask({ status: TaskStatus.IN_PROGRESS })];
 
       mockProjectAccessService.assertCanRead.mockResolvedValue(undefined);
-      mockTasksRepository.find.mockResolvedValue(tasks);
+      mockTasksRepository.findAndCount.mockResolvedValue([tasks, 1]);
 
-      const result = await service.findByProject('proj-uuid-1', dev);
+      const result = await service.findByProject('proj-uuid-1', dev, {});
 
       expect(mockProjectAccessService.assertCanRead).toHaveBeenCalledWith('proj-uuid-1', dev, {
         allowAdmin: false,
       });
-      expect(mockTasksRepository.find).toHaveBeenCalledWith(
-        expect.objectContaining({ order: { createdAt: 'ASC' } }),
+      expect(mockTasksRepository.findAndCount).toHaveBeenCalledWith(
+        expect.objectContaining({ order: { createdAt: 'ASC' }, skip: 0, take: 20 }),
       );
-      expect(result).toHaveLength(1);
-      expect(result[0].status).toBe(TaskStatus.IN_PROGRESS);
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0].status).toBe(TaskStatus.IN_PROGRESS);
+      expect(result.meta).toEqual({ total: 1, page: 1, limit: 20, totalPages: 1 });
     });
 
     it('lanza ForbiddenException (403) cuando el usuario no es miembro del proyecto', async () => {
@@ -285,7 +312,7 @@ describe('TasksService', () => {
         new ForbiddenException('You are not a member of this project'),
       );
 
-      await expect(service.findByProject('proj-uuid-1', dev)).rejects.toThrow(ForbiddenException);
+      await expect(service.findByProject('proj-uuid-1', dev, {})).rejects.toThrow(ForbiddenException);
     });
 
     it('lanza NotFoundException (404) cuando el proyecto no existe', async () => {
@@ -294,22 +321,33 @@ describe('TasksService', () => {
         new NotFoundException('Project not found'),
       );
 
-      await expect(service.findByProject('nonexistent', dev)).rejects.toThrow(NotFoundException);
+      await expect(service.findByProject('nonexistent', dev, {})).rejects.toThrow(NotFoundException);
     });
 
     it('excluye tareas canceladas de los resultados', async () => {
       const dev = makeUser();
       // Solo devuelve tareas no canceladas (el where excluye CANCELLED)
       mockProjectAccessService.assertCanRead.mockResolvedValue(undefined);
-      mockTasksRepository.find.mockResolvedValue([makeTask({ status: TaskStatus.TODO })]);
+      mockTasksRepository.findAndCount.mockResolvedValue([[makeTask({ status: TaskStatus.TODO })], 1]);
 
-      const result = await service.findByProject('proj-uuid-1', dev);
+      const result = await service.findByProject('proj-uuid-1', dev, {});
 
       // Verifica que la query incluyó la exclusión de CANCELLED
-      expect(mockTasksRepository.find).toHaveBeenCalledWith(
+      expect(mockTasksRepository.findAndCount).toHaveBeenCalledWith(
         expect.objectContaining({ where: expect.objectContaining({ projectId: 'proj-uuid-1' }) }),
       );
-      expect(result.every((t) => t.status !== TaskStatus.CANCELLED)).toBe(true);
+      expect(result.data.every((t) => t.status !== TaskStatus.CANCELLED)).toBe(true);
+    });
+
+    it('aplica skip/take derivados de page/limit provistos', async () => {
+      mockProjectAccessService.assertCanRead.mockResolvedValue(undefined);
+      mockTasksRepository.findAndCount.mockResolvedValue([[], 0]);
+
+      await service.findByProject('proj-uuid-1', makeUser(), { page: 2, limit: 5 });
+
+      expect(mockTasksRepository.findAndCount).toHaveBeenCalledWith(
+        expect.objectContaining({ skip: 5, take: 5 }),
+      );
     });
   });
 

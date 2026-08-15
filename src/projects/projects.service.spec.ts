@@ -50,8 +50,10 @@ const mockManager = {
 const mockProjectsRepository = {
   find: jest.fn(),
   findOne: jest.fn(),
+  findAndCount: jest.fn(),
   create: jest.fn(),
   save: jest.fn(),
+  createQueryBuilder: jest.fn(),
   manager: {
     transaction: jest.fn((cb: (manager: typeof mockManager) => unknown) => cb(mockManager)),
   },
@@ -60,6 +62,18 @@ const mockProjectsRepository = {
 const mockUsersRepository = {
   find: jest.fn(),
 };
+
+// QB mock chainable auto-referente; usado por findMine (join a-muchos, requiere
+// getManyAndCount para paginar entidades, no filas crudas). No hay precedente
+// de este patrón en el repo — se colocaliza aquí per diseño.
+function makeQueryBuilderMock(result: [Project[], number]) {
+  const qb: Record<string, jest.Mock> = {};
+  for (const method of ['innerJoin', 'leftJoinAndSelect', 'where', 'orderBy', 'skip', 'take']) {
+    qb[method] = jest.fn(() => qb);
+  }
+  (qb as any).getManyAndCount = jest.fn().mockResolvedValue(result);
+  return qb as any;
+}
 
 // ── Suite principal ────────────────────────────────────────────────────────────
 
@@ -89,26 +103,80 @@ describe('ProjectsService', () => {
   // ── findAll ─────────────────────────────────────────────────────────────────
 
   describe('findAll', () => {
-    it('devuelve la lista de proyectos mapeados a ProjectResponseDto', async () => {
+    it('devuelve la lista paginada de proyectos mapeados a ProjectResponseDto', async () => {
       const projects = [makeProject(), makeProject({ id: 'proj-uuid-2', name: 'Another' })];
-      mockProjectsRepository.find.mockResolvedValue(projects);
+      mockProjectsRepository.findAndCount.mockResolvedValue([projects, 2]);
 
-      const result = await service.findAll();
+      const result = await service.findAll({});
 
-      expect(mockProjectsRepository.find).toHaveBeenCalledWith({
+      expect(mockProjectsRepository.findAndCount).toHaveBeenCalledWith({
         relations: { developers: true },
         order: { createdAt: 'ASC' },
+        skip: 0,
+        take: 20,
       });
-      expect(result).toHaveLength(2);
-      expect(result[0].id).toBe('proj-uuid-1');
+      expect(result.data).toHaveLength(2);
+      expect(result.data[0].id).toBe('proj-uuid-1');
+      expect(result.meta).toEqual({ total: 2, page: 1, limit: 20, totalPages: 1 });
     });
 
-    it('devuelve array vacío cuando no hay proyectos', async () => {
-      mockProjectsRepository.find.mockResolvedValue([]);
+    it('devuelve data vacía cuando no hay proyectos', async () => {
+      mockProjectsRepository.findAndCount.mockResolvedValue([[], 0]);
 
-      const result = await service.findAll();
+      const result = await service.findAll({});
 
-      expect(result).toEqual([]);
+      expect(result.data).toEqual([]);
+      expect(result.meta.total).toBe(0);
+    });
+
+    it('aplica skip/take derivados de page/limit provistos', async () => {
+      mockProjectsRepository.findAndCount.mockResolvedValue([[], 0]);
+
+      await service.findAll({ page: 2, limit: 10 });
+
+      expect(mockProjectsRepository.findAndCount).toHaveBeenCalledWith(
+        expect.objectContaining({ skip: 10, take: 10 }),
+      );
+    });
+
+    it('data:[] con meta.total preciso cuando page excede totalPages (sin clamping)', async () => {
+      mockProjectsRepository.findAndCount.mockResolvedValue([[], 3]);
+
+      const result = await service.findAll({ page: 5, limit: 20 });
+
+      expect(result.data).toEqual([]);
+      expect(result.meta).toEqual({ total: 3, page: 5, limit: 20, totalPages: 1 });
+    });
+  });
+
+  // ── findMine ────────────────────────────────────────────────────────────────
+
+  describe('findMine', () => {
+    it('devuelve los proyectos paginados del usuario vía query builder', async () => {
+      const projects = [makeProject()];
+      const qb = makeQueryBuilderMock([projects, 1]);
+      mockProjectsRepository.createQueryBuilder.mockReturnValue(qb);
+
+      const result = await service.findMine('user-uuid-1', {});
+
+      expect(qb.innerJoin).toHaveBeenCalledWith('project.developers', 'dev', 'dev.id = :userId', {
+        userId: 'user-uuid-1',
+      });
+      expect(qb.orderBy).toHaveBeenCalledWith('project.createdAt', 'ASC');
+      expect(qb.skip).toHaveBeenCalledWith(0);
+      expect(qb.take).toHaveBeenCalledWith(20);
+      expect(result.data).toHaveLength(1);
+      expect(result.meta).toEqual({ total: 1, page: 1, limit: 20, totalPages: 1 });
+    });
+
+    it('aplica skip/take derivados de page/limit provistos', async () => {
+      const qb = makeQueryBuilderMock([[], 0]);
+      mockProjectsRepository.createQueryBuilder.mockReturnValue(qb);
+
+      await service.findMine('user-uuid-1', { page: 2, limit: 5 });
+
+      expect(qb.skip).toHaveBeenCalledWith(5);
+      expect(qb.take).toHaveBeenCalledWith(5);
     });
   });
 

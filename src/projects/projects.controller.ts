@@ -6,12 +6,16 @@ import {
   Patch,
   Post,
   Put,
+  Query,
   Req,
   UseGuards,
+  ValidationPipe,
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
+import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
+import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
 import { UserRole } from '../users/users.entity';
 import { AssignDevelopersDto } from './dto/assign-developers.dto';
 import { CreateProjectDto } from './dto/create-project.dto';
@@ -25,17 +29,24 @@ export class ProjectsController {
 
   // GET /projects/mine — devuelve los proyectos donde el usuario autenticado es developer (JWT-only)
   @Get('mine')
-  findMine(@Req() req: Request): Promise<ProjectResponseDto[]> {
+  findMine(
+    @Req() req: Request,
+    @Query(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
+    query: PaginationQueryDto,
+  ): Promise<PaginatedResponseDto<ProjectResponseDto>> {
     const user = req.user as { id: string };
-    return this.projectsService.findMine(user.id);
+    return this.projectsService.findMine(user.id, query);
   }
 
   // GET /projects — lista todos los proyectos con sus developers (ADMIN)
   @Get()
   @UseGuards(RolesGuard)
   @Roles(UserRole.ADMIN)
-  findAll(): Promise<ProjectResponseDto[]> {
-    return this.projectsService.findAll();
+  findAll(
+    @Query(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
+    query: PaginationQueryDto,
+  ): Promise<PaginatedResponseDto<ProjectResponseDto>> {
+    return this.projectsService.findAll(query);
   }
 
   // POST /projects — crea un nuevo proyecto (ADMIN)

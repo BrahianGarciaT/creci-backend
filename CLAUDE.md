@@ -38,7 +38,7 @@ src/
 - Always throw exceptions from the service layer, never from the controller
 
 ## API responses
-- Return data directly without a wrapper envelope
+- Return data directly without a wrapper envelope, except paginated list endpoints, which return `{ data, meta }` (see `src/common/dto/paginated-response.dto.ts`)
 - Let HTTP status codes communicate the result
 - Use NestJS default behavior (`@HttpCode`, `@Get`, `@Post`, etc.)
 

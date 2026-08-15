@@ -101,37 +101,39 @@ describe('TasksController', () => {
   // ── GET /tasks ───────────────────────────────────────────────────────────────
 
   describe('findAll', () => {
-    it('llama a TasksService.findAll sin projectId cuando no se provee', async () => {
+    it('llama a TasksService.findAll con la query de paginación y devuelve el envelope', async () => {
       const dtos = [makeResponseDto()];
-      mockTasksService.findAll.mockResolvedValue(dtos);
+      const paginated = { data: dtos, meta: { total: 1, page: 1, limit: 20, totalPages: 1 } };
+      mockTasksService.findAll.mockResolvedValue(paginated);
 
-      const result = await controller.findAll();
+      const result = await controller.findAll({});
 
-      expect(mockTasksService.findAll).toHaveBeenCalledWith(undefined);
-      expect(result).toBe(dtos);
+      expect(mockTasksService.findAll).toHaveBeenCalledWith({});
+      expect(result).toBe(paginated);
     });
 
     it('pasa projectId a TasksService.findAll cuando se provee como query param', async () => {
-      mockTasksService.findAll.mockResolvedValue([]);
+      mockTasksService.findAll.mockResolvedValue({ data: [], meta: { total: 0, page: 1, limit: 20, totalPages: 0 } });
 
-      await controller.findAll('proj-uuid-1');
+      await controller.findAll({ projectId: 'proj-uuid-1' });
 
-      expect(mockTasksService.findAll).toHaveBeenCalledWith('proj-uuid-1');
+      expect(mockTasksService.findAll).toHaveBeenCalledWith({ projectId: 'proj-uuid-1' });
     });
   });
 
   // ── GET /tasks/project/:projectId ────────────────────────────────────────────
 
   describe('findByProject', () => {
-    it('llama a TasksService.findByProject con projectId y el usuario actual', async () => {
+    it('llama a TasksService.findByProject con projectId, el usuario actual y la query de paginación', async () => {
       const dev = makeUser();
       const dtos = [makeResponseDto({ status: TaskStatus.IN_PROGRESS })];
-      mockTasksService.findByProject.mockResolvedValue(dtos);
+      const paginated = { data: dtos, meta: { total: 1, page: 1, limit: 20, totalPages: 1 } };
+      mockTasksService.findByProject.mockResolvedValue(paginated);
 
-      const result = await controller.findByProject('proj-uuid-1', dev);
+      const result = await controller.findByProject('proj-uuid-1', dev, {});
 
-      expect(mockTasksService.findByProject).toHaveBeenCalledWith('proj-uuid-1', dev);
-      expect(result).toBe(dtos);
+      expect(mockTasksService.findByProject).toHaveBeenCalledWith('proj-uuid-1', dev, {});
+      expect(result).toBe(paginated);
     });
 
     it('propaga ForbiddenException cuando el servicio la lanza', async () => {
@@ -140,7 +142,7 @@ describe('TasksController', () => {
         new ForbiddenException('You are not a member of this project'),
       );
 
-      await expect(controller.findByProject('proj-uuid-1', dev)).rejects.toThrow(ForbiddenException);
+      await expect(controller.findByProject('proj-uuid-1', dev, {})).rejects.toThrow(ForbiddenException);
     });
   });
 
