@@ -280,6 +280,60 @@ describe('TasksService', () => {
       expect(result.data).toEqual([]);
       expect(result.meta).toEqual({ total: 3, page: 5, limit: 20, totalPages: 1 });
     });
+
+    it('sin filtros, where no tiene claves status/priority/projectId', async () => {
+      mockTasksRepository.findAndCount.mockResolvedValue([[], 0]);
+
+      await service.findAll({});
+
+      const opts = mockTasksRepository.findAndCount.mock.calls[0][0];
+      expect(opts.where).toEqual({});
+      expect(opts.where).not.toHaveProperty('status');
+      expect(opts.where).not.toHaveProperty('priority');
+      expect(opts.where).not.toHaveProperty('projectId');
+    });
+
+    it('filtra por status cuando se provee', async () => {
+      mockTasksRepository.findAndCount.mockResolvedValue([[], 0]);
+
+      await service.findAll({ status: TaskStatus.DONE });
+
+      const opts = mockTasksRepository.findAndCount.mock.calls[0][0];
+      expect(opts.where).toEqual({ status: TaskStatus.DONE });
+      expect(opts.where).not.toHaveProperty('priority');
+      expect(opts.where).not.toHaveProperty('projectId');
+    });
+
+    it('filtra por projectId, status y priority combinados (AND)', async () => {
+      mockTasksRepository.findAndCount.mockResolvedValue([[], 0]);
+
+      await service.findAll({
+        projectId: 'proj-uuid-1',
+        status: TaskStatus.TODO,
+        priority: TaskPriority.HIGH,
+      });
+
+      expect(mockTasksRepository.findAndCount).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { projectId: 'proj-uuid-1', status: TaskStatus.TODO, priority: TaskPriority.HIGH },
+        }),
+      );
+    });
+
+    it('filtro y paginación coexisten en la misma llamada (filter-then-paginate)', async () => {
+      mockTasksRepository.findAndCount.mockResolvedValue([[], 25]);
+
+      const result = await service.findAll({ status: TaskStatus.DONE, page: 2, limit: 20 });
+
+      expect(mockTasksRepository.findAndCount).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { status: TaskStatus.DONE },
+          skip: 20,
+          take: 20,
+        }),
+      );
+      expect(result.meta).toEqual({ total: 25, page: 2, limit: 20, totalPages: 2 });
+    });
   });
 
   // ── findByProject ────────────────────────────────────────────────────────────
