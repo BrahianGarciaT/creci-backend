@@ -59,10 +59,7 @@ export class UsersService {
 
     try {
       const saved = await this.usersRepository.save(user);
-      this.logger.info(
-        { userId: saved.id, role: saved.role },
-        'User created',
-      );
+      this.logger.info({ userId: saved.id, role: saved.role }, 'User created');
       return UserResponseDto.from(saved);
     } catch (error: unknown) {
       // Violación de restricción unique de Postgres (defensa en profundidad)

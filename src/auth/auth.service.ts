@@ -33,10 +33,7 @@ export class AuthService {
 
     const passwordMatch = await bcrypt.compare(dto.password, user.password);
     if (!passwordMatch) {
-      this.logger.warn(
-        { userId: user.id },
-        'Login failed: wrong password',
-      );
+      this.logger.warn({ userId: user.id }, 'Login failed: wrong password');
       throw new UnauthorizedException('Invalid credentials');
     }
 

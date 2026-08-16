@@ -482,7 +482,7 @@ describe('TasksService', () => {
       // Verifica que la query no filtra por status (solo por projectId)
       expect(mockTasksRepository.findAndCount).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { projectId: 'proj-uuid-1' } as FindManyOptions<Task>['where'],
+          where: { projectId: 'proj-uuid-1' },
         }),
       );
       expect(result.data.some((t) => t.status === TaskStatus.CANCELLED)).toBe(
@@ -1026,7 +1026,10 @@ describe('TasksService', () => {
     });
 
     it('asigna position al final de la columna cancelled', async () => {
-      const task = makeTask({ projectId: 'proj-uuid-9', status: TaskStatus.TODO });
+      const task = makeTask({
+        projectId: 'proj-uuid-9',
+        status: TaskStatus.TODO,
+      });
 
       mockTasksRepository.findOne.mockResolvedValue(task);
       mockTasksRepository.count.mockResolvedValue(4);

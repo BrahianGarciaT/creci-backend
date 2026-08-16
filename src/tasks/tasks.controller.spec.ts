@@ -181,11 +181,7 @@ describe('TasksController', () => {
       };
       mockTasksService.reorderColumn.mockResolvedValue(undefined);
 
-      const result = await controller.reorderColumn(
-        'proj-uuid-1',
-        dto,
-        dev,
-      );
+      const result = await controller.reorderColumn('proj-uuid-1', dto, dev);
 
       expect(mockTasksService.reorderColumn).toHaveBeenCalledWith(
         'proj-uuid-1',

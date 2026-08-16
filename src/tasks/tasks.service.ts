@@ -302,7 +302,12 @@ export class TasksService {
     task.status = dto.status;
     const saved = await this.tasksRepository.save(task);
     this.logger.info(
-      { taskId: id, from: previousStatus, to: dto.status, userId: currentUser.id },
+      {
+        taskId: id,
+        from: previousStatus,
+        to: dto.status,
+        userId: currentUser.id,
+      },
       'Task status changed',
     );
     return TaskResponseDto.from(saved);
@@ -321,7 +326,10 @@ export class TasksService {
       throw new ForbiddenException('You are not the assignee of this task');
     }
 
-    if (task.status === TaskStatus.DONE || task.status === TaskStatus.CANCELLED) {
+    if (
+      task.status === TaskStatus.DONE ||
+      task.status === TaskStatus.CANCELLED
+    ) {
       throw new BadRequestException(
         'No se puede modificar la estimación de una tarea completada o cancelada.',
       );
