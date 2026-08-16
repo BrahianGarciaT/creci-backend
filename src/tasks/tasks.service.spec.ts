@@ -270,141 +270,6 @@ describe('TasksService', () => {
     });
   });
 
-  // ── findAll ─────────────────────────────────────────────────────────────────
-
-  describe('findAll', () => {
-    it('devuelve todas las tareas incluyendo canceladas, paginadas', async () => {
-      const tasks = [
-        makeTask({ status: TaskStatus.DONE }),
-        makeTask({ id: 'task-uuid-2', status: TaskStatus.CANCELLED }),
-      ];
-      mockTasksRepository.findAndCount.mockResolvedValue([tasks, 2]);
-
-      const result = await service.findAll({});
-
-      expect(mockTasksRepository.findAndCount).toHaveBeenCalledWith({
-        where: {},
-        relations: { project: true, assignee: true },
-        order: { createdAt: 'ASC' },
-        skip: 0,
-        take: 20,
-      });
-      expect(result.data).toHaveLength(2);
-      expect(result.meta).toEqual({
-        total: 2,
-        page: 1,
-        limit: 20,
-        totalPages: 1,
-      });
-    });
-
-    it('filtra por projectId cuando se provee', async () => {
-      mockTasksRepository.findAndCount.mockResolvedValue([[makeTask()], 1]);
-
-      await service.findAll({ projectId: 'proj-uuid-1' });
-
-      expect(mockTasksRepository.findAndCount).toHaveBeenCalledWith({
-        where: { projectId: 'proj-uuid-1' },
-        relations: { project: true, assignee: true },
-        order: { createdAt: 'ASC' },
-        skip: 0,
-        take: 20,
-      });
-    });
-
-    it('aplica skip/take derivados de page/limit provistos (page=2, limit=20 → items 21-40)', async () => {
-      mockTasksRepository.findAndCount.mockResolvedValue([[], 50]);
-
-      const result = await service.findAll({ page: 2, limit: 20 });
-
-      expect(mockTasksRepository.findAndCount).toHaveBeenCalledWith(
-        expect.objectContaining({ skip: 20, take: 20 }),
-      );
-      expect(result.meta.page).toBe(2);
-    });
-
-    it('data:[] con meta.total preciso cuando page excede totalPages (sin clamping)', async () => {
-      mockTasksRepository.findAndCount.mockResolvedValue([[], 3]);
-
-      const result = await service.findAll({ page: 5, limit: 20 });
-
-      expect(result.data).toEqual([]);
-      expect(result.meta).toEqual({
-        total: 3,
-        page: 5,
-        limit: 20,
-        totalPages: 1,
-      });
-    });
-
-    it('sin filtros, where no tiene claves status/priority/projectId', async () => {
-      mockTasksRepository.findAndCount.mockResolvedValue([[], 0]);
-
-      await service.findAll({});
-
-      const opts = mockTasksRepository.findAndCount.mock.calls[0][0];
-      expect(opts.where).toEqual({});
-      expect(opts.where).not.toHaveProperty('status');
-      expect(opts.where).not.toHaveProperty('priority');
-      expect(opts.where).not.toHaveProperty('projectId');
-    });
-
-    it('filtra por status cuando se provee', async () => {
-      mockTasksRepository.findAndCount.mockResolvedValue([[], 0]);
-
-      await service.findAll({ status: TaskStatus.DONE });
-
-      const opts = mockTasksRepository.findAndCount.mock.calls[0][0];
-      expect(opts.where).toEqual({ status: TaskStatus.DONE });
-      expect(opts.where).not.toHaveProperty('priority');
-      expect(opts.where).not.toHaveProperty('projectId');
-    });
-
-    it('filtra por projectId, status y priority combinados (AND)', async () => {
-      mockTasksRepository.findAndCount.mockResolvedValue([[], 0]);
-
-      await service.findAll({
-        projectId: 'proj-uuid-1',
-        status: TaskStatus.TODO,
-        priority: TaskPriority.HIGH,
-      });
-
-      expect(mockTasksRepository.findAndCount).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: {
-            projectId: 'proj-uuid-1',
-            status: TaskStatus.TODO,
-            priority: TaskPriority.HIGH,
-          },
-        }),
-      );
-    });
-
-    it('filtro y paginación coexisten en la misma llamada (filter-then-paginate)', async () => {
-      mockTasksRepository.findAndCount.mockResolvedValue([[], 25]);
-
-      const result = await service.findAll({
-        status: TaskStatus.DONE,
-        page: 2,
-        limit: 20,
-      });
-
-      expect(mockTasksRepository.findAndCount).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { status: TaskStatus.DONE },
-          skip: 20,
-          take: 20,
-        }),
-      );
-      expect(result.meta).toEqual({
-        total: 25,
-        page: 2,
-        limit: 20,
-        totalPages: 2,
-      });
-    });
-  });
-
   // ── findByProject ────────────────────────────────────────────────────────────
 
   describe('findByProject', () => {
@@ -421,7 +286,7 @@ describe('TasksService', () => {
         'proj-uuid-1',
         dev,
         {
-          allowAdmin: false,
+          allowAdmin: true,
         },
       );
       expect(mockTasksRepository.findAndCount).toHaveBeenCalledWith(
@@ -439,6 +304,20 @@ describe('TasksService', () => {
         limit: 20,
         totalPages: 1,
       });
+    });
+
+    it('pasa allowAdmin: true a assertCanRead para permitir admin no-miembro', async () => {
+      const admin = makeUser({ id: 'admin-uuid-1', role: UserRole.ADMIN });
+      mockProjectAccessService.assertCanRead.mockResolvedValue(undefined);
+      mockTasksRepository.findAndCount.mockResolvedValue([[], 0]);
+
+      await service.findByProject('proj-uuid-1', admin, {});
+
+      expect(mockProjectAccessService.assertCanRead).toHaveBeenCalledWith(
+        'proj-uuid-1',
+        admin,
+        { allowAdmin: true },
+      );
     });
 
     it('lanza ForbiddenException (403) cuando el usuario no es miembro del proyecto', async () => {
@@ -502,6 +381,74 @@ describe('TasksService', () => {
       expect(mockTasksRepository.findAndCount).toHaveBeenCalledWith(
         expect.objectContaining({ skip: 5, take: 5 }),
       );
+    });
+
+    it('all:true devuelve todas las tareas del proyecto sin skip/take (unpaginated)', async () => {
+      const dev = makeUser();
+      const tasks = [
+        makeTask({ id: 'task-a' }),
+        makeTask({ id: 'task-b' }),
+        makeTask({ id: 'task-c' }),
+      ];
+      mockProjectAccessService.assertCanRead.mockResolvedValue(undefined);
+      mockTasksRepository.find.mockResolvedValue(tasks);
+
+      const result = await service.findByProject('proj-uuid-1', dev, {
+        all: true,
+      });
+
+      // Exact match (sin skip/take): toHaveBeenCalledWith falla si el objeto
+      // real trae claves extra, así que esto ya prueba que se omiten.
+      expect(mockTasksRepository.find).toHaveBeenCalledWith({
+        where: { projectId: 'proj-uuid-1' },
+        relations: { project: true, assignee: true },
+        order: { position: 'ASC', createdAt: 'ASC' },
+      });
+      expect(mockTasksRepository.findAndCount).not.toHaveBeenCalled();
+      expect(result.data).toHaveLength(3);
+      expect(result.meta).toEqual({
+        total: 3,
+        page: 1,
+        limit: 3,
+        totalPages: 1,
+      });
+    });
+
+    it('all:true en un proyecto vacío devuelve lista vacía sin error', async () => {
+      const dev = makeUser();
+      mockProjectAccessService.assertCanRead.mockResolvedValue(undefined);
+      mockTasksRepository.find.mockResolvedValue([]);
+
+      const result = await service.findByProject('proj-uuid-1', dev, {
+        all: true,
+      });
+
+      expect(result.data).toEqual([]);
+      expect(result.meta).toEqual({
+        total: 0,
+        page: 1,
+        limit: 0,
+        totalPages: 1,
+      });
+    });
+
+    it('sin all (u omitido), preserva el comportamiento paginado existente', async () => {
+      const dev = makeUser();
+      mockProjectAccessService.assertCanRead.mockResolvedValue(undefined);
+      mockTasksRepository.findAndCount.mockResolvedValue([[makeTask()], 1]);
+
+      const result = await service.findByProject('proj-uuid-1', dev, {});
+
+      expect(mockTasksRepository.find).not.toHaveBeenCalled();
+      expect(mockTasksRepository.findAndCount).toHaveBeenCalledWith(
+        expect.objectContaining({ skip: 0, take: 20 }),
+      );
+      expect(result.meta).toEqual({
+        total: 1,
+        page: 1,
+        limit: 20,
+        totalPages: 1,
+      });
     });
   });
 
@@ -1070,7 +1017,7 @@ describe('TasksService', () => {
       expect(mockProjectAccessService.assertCanRead).toHaveBeenCalledWith(
         'proj-uuid-1',
         dev,
-        { allowAdmin: false },
+        { allowAdmin: true },
       );
       expect(mockTasksRepository.find).toHaveBeenCalledWith({
         where: { projectId: 'proj-uuid-1', status: TaskStatus.TODO },
@@ -1141,6 +1088,27 @@ describe('TasksService', () => {
         service.reorderColumn('proj-uuid-1', dto, dev),
       ).rejects.toThrow(ForbiddenException);
       expect(mockTasksRepository.find).not.toHaveBeenCalled();
+    });
+
+    it('pasa allowAdmin: true a assertCanRead para permitir admin no-miembro', async () => {
+      const admin = makeUser({ id: 'admin-uuid-1', role: UserRole.ADMIN });
+      const existing = [makeTask({ id: 'task-a' })];
+      mockProjectAccessService.assertCanRead.mockResolvedValue(undefined);
+      mockTasksRepository.find.mockResolvedValue(existing);
+      mockTasksRepository.update.mockResolvedValue(undefined);
+
+      const dto: ReorderColumnDto = {
+        status: TaskStatus.TODO,
+        taskIds: ['task-a'],
+      };
+
+      await service.reorderColumn('proj-uuid-1', dto, admin);
+
+      expect(mockProjectAccessService.assertCanRead).toHaveBeenCalledWith(
+        'proj-uuid-1',
+        admin,
+        { allowAdmin: true },
+      );
     });
   });
 });

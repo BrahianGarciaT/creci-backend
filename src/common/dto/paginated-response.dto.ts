@@ -26,4 +26,19 @@ export class PaginatedResponseDto<T> {
     };
     return dto;
   }
+
+  // Envelope para respuestas sin paginar (ej. `all=true`). `limit = items.length`
+  // evita el `Math.ceil(total/limit)` de from() cuando total=0 (división por
+  // cero -> NaN); acá totalPages siempre es 1 porque no hay más páginas.
+  static unpaginated<T>(items: T[]): PaginatedResponseDto<T> {
+    const dto = new PaginatedResponseDto<T>();
+    dto.data = items;
+    dto.meta = {
+      total: items.length,
+      page: 1,
+      limit: items.length,
+      totalPages: 1,
+    };
+    return dto;
+  }
 }

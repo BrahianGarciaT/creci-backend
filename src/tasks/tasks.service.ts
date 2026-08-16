@@ -6,16 +6,15 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { PinoLogger } from 'nestjs-pino';
-import { FindOptionsWhere, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
-import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
 import { resolvePagination } from '../common/pagination';
 import { Project } from '../projects/projects.entity';
 import { ProjectAccessService } from '../projects/project-access.service';
 import { User } from '../users/users.entity';
 import { CreateTaskDto } from './dto/create-task.dto';
+import { ProjectTaskListQueryDto } from './dto/project-task-list-query.dto';
 import { ReorderColumnDto } from './dto/reorder-column.dto';
-import { TaskListQueryDto } from './dto/task-list-query.dto';
 import { TaskResponseDto } from './dto/task-response.dto';
 import { UpdateEstimateDto } from './dto/update-estimate.dto';
 import { UpdateStatusDto } from './dto/update-status.dto';
@@ -70,51 +69,35 @@ export class TasksService {
     return TaskResponseDto.from(saved);
   }
 
-  // Devuelve todas las tareas (incluyendo canceladas), paginadas; opcionalmente filtra por proyecto.
-  // Orden explícito por createdAt: sin ORDER BY, Postgres no garantiza orden estable y
-  // un UPDATE puede reubicar la fila (MVCC), haciendo que la tarea "salte" de posición
-  // en el cliente justo al editarla. Ahora también load-bearing para la estabilidad
-  // de la paginación por offset entre páginas consecutivas.
-  async findAll(
-    query: TaskListQueryDto,
-  ): Promise<PaginatedResponseDto<TaskResponseDto>> {
-    const { page, limit, skip, take } = resolvePagination(query);
-    const where: FindOptionsWhere<Task> = {};
-    if (query.projectId) where.projectId = query.projectId;
-    if (query.status) where.status = query.status;
-    if (query.priority) where.priority = query.priority;
-    const [tasks, total] = await this.tasksRepository.findAndCount({
-      where,
-      relations: { project: true, assignee: true },
-      order: { createdAt: 'ASC' },
-      skip,
-      take,
-    });
-    return PaginatedResponseDto.from(
-      tasks.map((task) => TaskResponseDto.from(task)),
-      total,
-      {
-        page,
-        limit,
-      },
-    );
-  }
-
-  // Devuelve todas las tareas de un proyecto (incluidas las canceladas), paginadas;
-  // verifica que el usuario sea miembro del proyecto. Las canceladas se incluyen a
-  // propósito: el dev asignado necesita ver que su tarea fue cancelada en vez de
-  // que desaparezca sin rastro; el volumen por dev no crece sin control (sin
-  // sprints todavía) así que no amerita filtrarlas por ahora.
+  // Devuelve las tareas de un proyecto (incluidas las canceladas); verifica que el
+  // usuario sea miembro del proyecto, o admin (kanban admin también es
+  // project-scoped, ver Requirement "Admin project-scoped kanban access").
+  // Las canceladas se incluyen a propósito: el dev asignado necesita ver que su
+  // tarea fue cancelada en vez de que desaparezca sin rastro; el volumen por dev
+  // no crece sin control (sin sprints todavía) así que no amerita filtrarlas.
   // Orden por `position` (orden visual del kanban dentro de cada columna, ver
   // reorderColumn) con createdAt como desempate estable para filas nunca reordenadas.
+  // `all=true` devuelve el proyecto completo sin skip/take: un board de kanban
+  // se muestra entero, paginarlo lo fragmentaría en columnas incompletas.
   async findByProject(
     projectId: string,
     currentUser: User,
-    query: PaginationQueryDto,
+    query: ProjectTaskListQueryDto,
   ): Promise<PaginatedResponseDto<TaskResponseDto>> {
     await this.projectAccessService.assertCanRead(projectId, currentUser, {
-      allowAdmin: false,
+      allowAdmin: true,
     });
+
+    if (query.all === true) {
+      const tasks = await this.tasksRepository.find({
+        where: { projectId },
+        relations: { project: true, assignee: true },
+        order: { position: 'ASC', createdAt: 'ASC' },
+      });
+      return PaginatedResponseDto.unpaginated(
+        tasks.map((task) => TaskResponseDto.from(task)),
+      );
+    }
 
     const { page, limit, skip, take } = resolvePagination(query);
     const [tasks, total] = await this.tasksRepository.findAndCount({
@@ -363,14 +346,15 @@ export class TasksService {
   // contra datos obsoletos: si el board cambió entre el fetch y el drop, se
   // rechaza con 400 en vez de reordenar a ciegas). Cualquier miembro del
   // proyecto puede reordenar la columna compartida — es una decisión de
-  // layout visual, no una edición de campos de la tarea de otro dev.
+  // layout visual, no una edición de campos de la tarea de otro dev. Admin
+  // también puede reordenar sin ser miembro (kanban admin es project-scoped).
   async reorderColumn(
     projectId: string,
     dto: ReorderColumnDto,
     currentUser: User,
   ): Promise<void> {
     await this.projectAccessService.assertCanRead(projectId, currentUser, {
-      allowAdmin: false,
+      allowAdmin: true,
     });
 
     const existing = await this.tasksRepository.find({

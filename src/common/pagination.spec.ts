@@ -84,3 +84,29 @@ describe('PaginatedResponseDto.from', () => {
     expect(result.meta.totalPages).toBe(0);
   });
 });
+
+describe('PaginatedResponseDto.unpaginated', () => {
+  it('devuelve todos los items con meta.total=meta.limit=items.length', () => {
+    const result = PaginatedResponseDto.unpaginated(['a', 'b', 'c']);
+
+    expect(result.data).toEqual(['a', 'b', 'c']);
+    expect(result.meta).toEqual({
+      total: 3,
+      page: 1,
+      limit: 3,
+      totalPages: 1,
+    });
+  });
+
+  it('lista vacía no produce NaN en totalPages (a diferencia de from() con limit=0)', () => {
+    const result = PaginatedResponseDto.unpaginated([]);
+
+    expect(result.data).toEqual([]);
+    expect(result.meta).toEqual({
+      total: 0,
+      page: 1,
+      limit: 0,
+      totalPages: 1,
+    });
+  });
+});
