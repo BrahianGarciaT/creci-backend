@@ -6,6 +6,9 @@ This app has its **own independent git repository** rooted at `apps/backend/`.
 - Never run `git` from `d:/proyects/creci-app` — there is no git repo there.
 - Branches, commits, and PRs belong to this repo only.
 - Commit messages MUST be in Spanish. Use conventional commits format (`feat:`, `fix:`, `chore:`, etc.) with the description in Spanish.
+- PR titles and PR descriptions (body) MUST be in Spanish, including section headers (e.g. `## Resumen`, not `## Summary`) and table field names. This applies whether the PR was created via the SDD/chained-pr flow or as a quick, out-of-flow fix.
+- Technical English is allowed inside Spanish text for things that must stay in English: identifiers, file/function/class names, command names, error messages, library/framework terms (e.g. "el guard valida el `assigneeId` antes de mergear el PR").
+- Once a spec/change has been reviewed, closed, and merged into `main`, checkout `main` (and pull/fast-forward it) before starting the next piece of work — never keep building on the now-stale feature branch.
 
 ## Language
 - All code (variables, functions, classes, files, folders) in **English**
