@@ -73,6 +73,13 @@ export class Task {
   @Column({ name: 'completed_at', nullable: true, type: 'timestamptz' })
   completedAt: Date | null;
 
+  // Posición dentro de su columna del kanban (scoped a projectId+status), 0-based.
+  // Se reasigna por índice completo en cada reorder (ver TasksService.reorderColumn)
+  // y se agrega al final de la columna destino en cada cambio de status — nunca hay
+  // huecos ni colisiones dentro de un mismo projectId+status.
+  @Column({ default: 0 })
+  position: number;
+
   // Relación con el proyecto; al borrar el proyecto las tareas se eliminan en cascada
   @ManyToOne(() => Project, { onDelete: 'CASCADE', nullable: false })
   @JoinColumn({ name: 'project_id' })

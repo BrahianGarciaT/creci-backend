@@ -7,6 +7,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { RolesGuard } from '../auth/roles.guard';
 import { User, UserRole } from '../users/users.entity';
 import { CreateTaskDto } from './dto/create-task.dto';
+import { ReorderColumnDto } from './dto/reorder-column.dto';
 import { UpdateEstimateDto } from './dto/update-estimate.dto';
 import { UpdateStatusDto } from './dto/update-status.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
@@ -55,6 +56,7 @@ const mockTasksService = {
   create: jest.fn(),
   findAll: jest.fn(),
   findByProject: jest.fn(),
+  reorderColumn: jest.fn(),
   update: jest.fn(),
   updateStatus: jest.fn(),
   updateEstimate: jest.fn(),
@@ -164,6 +166,64 @@ describe('TasksController', () => {
 
       await expect(
         controller.findByProject('proj-uuid-1', dev, {}),
+      ).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  // ── PATCH /tasks/project/:projectId/reorder ──────────────────────────────────
+
+  describe('reorderColumn', () => {
+    it('llama a TasksService.reorderColumn con projectId, dto y el usuario actual', async () => {
+      const dev = makeUser();
+      const dto: ReorderColumnDto = {
+        status: TaskStatus.TODO,
+        taskIds: ['task-a', 'task-b'],
+      };
+      mockTasksService.reorderColumn.mockResolvedValue(undefined);
+
+      const result = await controller.reorderColumn(
+        'proj-uuid-1',
+        dto,
+        dev,
+      );
+
+      expect(mockTasksService.reorderColumn).toHaveBeenCalledWith(
+        'proj-uuid-1',
+        dto,
+        dev,
+      );
+      expect(result).toBeUndefined();
+    });
+
+    it('propaga BadRequestException (400) cuando el board quedó obsoleto', async () => {
+      const dev = makeUser();
+      const dto: ReorderColumnDto = {
+        status: TaskStatus.TODO,
+        taskIds: ['task-a'],
+      };
+      mockTasksService.reorderColumn.mockRejectedValue(
+        new BadRequestException(
+          'El tablero cambió desde que se cargó. Recargá la página e intentá de nuevo.',
+        ),
+      );
+
+      await expect(
+        controller.reorderColumn('proj-uuid-1', dto, dev),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('propaga ForbiddenException cuando el usuario no es miembro del proyecto', async () => {
+      const dev = makeUser({ id: 'outsider' });
+      const dto: ReorderColumnDto = {
+        status: TaskStatus.TODO,
+        taskIds: ['task-a'],
+      };
+      mockTasksService.reorderColumn.mockRejectedValue(
+        new ForbiddenException('You are not a member of this project'),
+      );
+
+      await expect(
+        controller.reorderColumn('proj-uuid-1', dto, dev),
       ).rejects.toThrow(ForbiddenException);
     });
   });
@@ -356,6 +416,11 @@ describe('TasksController', () => {
 
     it('el handler findByProject no tiene @Roles (JWT-only)', () => {
       const roles = getRolesMetadata('findByProject');
+      expect(roles).toBeUndefined();
+    });
+
+    it('el handler reorderColumn no tiene @Roles (JWT-only, cualquier miembro del proyecto)', () => {
+      const roles = getRolesMetadata('reorderColumn');
       expect(roles).toBeUndefined();
     });
 

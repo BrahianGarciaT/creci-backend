@@ -11,6 +11,7 @@ import { Project, ProjectStatus } from '../projects/projects.entity';
 import { ProjectAccessService } from '../projects/project-access.service';
 import { User, UserRole } from '../users/users.entity';
 import { CreateTaskDto } from './dto/create-task.dto';
+import { ReorderColumnDto } from './dto/reorder-column.dto';
 import { UpdateEstimateDto } from './dto/update-estimate.dto';
 import { UpdateStatusDto } from './dto/update-status.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
@@ -56,6 +57,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     priority: TaskPriority.MEDIUM,
     dueDate: null,
     estimatedHours: null,
+    position: 0,
     projectId: 'proj-uuid-1',
     project: makeProject(),
     assigneeId: null,
@@ -72,8 +74,10 @@ const mockTasksRepository = {
   find: jest.fn(),
   findOne: jest.fn(),
   findAndCount: jest.fn<Promise<[Task[], number]>, [FindManyOptions<Task>]>(),
+  count: jest.fn(),
   create: jest.fn(),
   save: jest.fn(),
+  update: jest.fn(),
 };
 
 const mockProjectsRepository = {
@@ -117,6 +121,8 @@ describe('TasksService', () => {
     }).compile();
 
     service = module.get<TasksService>(TasksService);
+    // Default: la columna destino está vacía (position 0) salvo que un test lo pise
+    mockTasksRepository.count.mockResolvedValue(0);
   });
 
   afterEach(() => jest.clearAllMocks());
@@ -148,6 +154,31 @@ describe('TasksService', () => {
       expect(mockTasksRepository.save).toHaveBeenCalled();
       expect(result.title).toBe('Nueva tarea');
       expect(result.status).toBe(TaskStatus.TODO);
+    });
+
+    it('asigna position al final de la columna todo del proyecto', async () => {
+      const dto: CreateTaskDto = {
+        title: 'Nueva tarea',
+        priority: TaskPriority.HIGH,
+        projectId: 'proj-uuid-1',
+      };
+      mockProjectsRepository.findOne.mockResolvedValue(makeProject());
+      mockTasksRepository.count.mockResolvedValue(3);
+      mockTasksRepository.create.mockImplementation(
+        (input: Partial<Task>) => input,
+      );
+      mockTasksRepository.save.mockImplementation((t: Task) =>
+        Promise.resolve(t),
+      );
+
+      await service.create(dto);
+
+      expect(mockTasksRepository.count).toHaveBeenCalledWith({
+        where: { projectId: 'proj-uuid-1', status: TaskStatus.TODO },
+      });
+      expect(mockTasksRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({ position: 3 }),
+      );
     });
 
     it('lanza NotFoundException (404) cuando el proyecto no existe', async () => {
@@ -395,7 +426,7 @@ describe('TasksService', () => {
       );
       expect(mockTasksRepository.findAndCount).toHaveBeenCalledWith(
         expect.objectContaining({
-          order: { createdAt: 'ASC' },
+          order: { position: 'ASC', createdAt: 'ASC' },
           skip: 0,
           take: 20,
         }),
@@ -707,6 +738,50 @@ describe('TasksService', () => {
       expect(result.status).toBe(TaskStatus.IN_PROGRESS);
     });
 
+    it('asigna position al final de la columna destino al cambiar de status', async () => {
+      const dev = makeUser();
+      const task = makeTask({
+        assigneeId: dev.id,
+        projectId: 'proj-uuid-9',
+        status: TaskStatus.TODO,
+        position: 0,
+      });
+      const dto: UpdateStatusDto = { status: TaskStatus.IN_PROGRESS };
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+      mockTasksRepository.count.mockResolvedValue(2);
+      mockTasksRepository.save.mockImplementation((t: Task) =>
+        Promise.resolve(t),
+      );
+
+      await service.updateStatus('task-uuid-1', dto, dev);
+
+      expect(mockTasksRepository.count).toHaveBeenCalledWith({
+        where: { projectId: 'proj-uuid-9', status: TaskStatus.IN_PROGRESS },
+      });
+      expect(task.position).toBe(2);
+    });
+
+    it('no reconsulta position en el no-op done -> done', async () => {
+      const dev = makeUser();
+      const task = makeTask({
+        assigneeId: dev.id,
+        status: TaskStatus.DONE,
+        position: 5,
+      });
+      const dto: UpdateStatusDto = { status: TaskStatus.DONE };
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+      mockTasksRepository.save.mockImplementation((t: Task) =>
+        Promise.resolve(t),
+      );
+
+      await service.updateStatus('task-uuid-1', dto, dev);
+
+      expect(mockTasksRepository.count).not.toHaveBeenCalled();
+      expect(task.position).toBe(5);
+    });
+
     it('lanza ForbiddenException (403) cuando el usuario no es el asignado', async () => {
       const dev = makeUser({ id: 'other-user' });
       const task = makeTask({ assigneeId: 'user-uuid-1' });
@@ -948,6 +1023,121 @@ describe('TasksService', () => {
         BadRequestException,
       );
       expect(mockTasksRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('asigna position al final de la columna cancelled', async () => {
+      const task = makeTask({ projectId: 'proj-uuid-9', status: TaskStatus.TODO });
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+      mockTasksRepository.count.mockResolvedValue(4);
+      mockTasksRepository.save.mockImplementation((t: Task) =>
+        Promise.resolve(t),
+      );
+
+      await service.softCancel('task-uuid-1');
+
+      expect(mockTasksRepository.count).toHaveBeenCalledWith({
+        where: { projectId: 'proj-uuid-9', status: TaskStatus.CANCELLED },
+      });
+      expect(task.position).toBe(4);
+    });
+  });
+
+  // ── reorderColumn ────────────────────────────────────────────────────────────
+
+  describe('reorderColumn', () => {
+    it('renumera position 0..n-1 según el orden recibido', async () => {
+      const dev = makeUser();
+      const existing = [
+        makeTask({ id: 'task-a' }),
+        makeTask({ id: 'task-b' }),
+        makeTask({ id: 'task-c' }),
+      ];
+      mockProjectAccessService.assertCanRead.mockResolvedValue(undefined);
+      mockTasksRepository.find.mockResolvedValue(existing);
+      mockTasksRepository.update.mockResolvedValue(undefined);
+
+      const dto: ReorderColumnDto = {
+        status: TaskStatus.TODO,
+        taskIds: ['task-c', 'task-a', 'task-b'],
+      };
+
+      await service.reorderColumn('proj-uuid-1', dto, dev);
+
+      expect(mockProjectAccessService.assertCanRead).toHaveBeenCalledWith(
+        'proj-uuid-1',
+        dev,
+        { allowAdmin: false },
+      );
+      expect(mockTasksRepository.find).toHaveBeenCalledWith({
+        where: { projectId: 'proj-uuid-1', status: TaskStatus.TODO },
+        select: { id: true },
+      });
+      expect(mockTasksRepository.update).toHaveBeenCalledWith('task-c', {
+        position: 0,
+      });
+      expect(mockTasksRepository.update).toHaveBeenCalledWith('task-a', {
+        position: 1,
+      });
+      expect(mockTasksRepository.update).toHaveBeenCalledWith('task-b', {
+        position: 2,
+      });
+    });
+
+    it('lanza BadRequestException (400) cuando taskIds no coincide con el set actual (board obsoleto)', async () => {
+      const dev = makeUser();
+      const existing = [makeTask({ id: 'task-a' }), makeTask({ id: 'task-b' })];
+      mockProjectAccessService.assertCanRead.mockResolvedValue(undefined);
+      mockTasksRepository.find.mockResolvedValue(existing);
+
+      const dto: ReorderColumnDto = {
+        status: TaskStatus.TODO,
+        // 'task-b' fue movida a otra columna entre el fetch y el drop
+        taskIds: ['task-a', 'task-z'],
+      };
+
+      await expect(
+        service.reorderColumn('proj-uuid-1', dto, dev),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockTasksRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('lanza BadRequestException (400) cuando falta o sobra un id respecto al set actual', async () => {
+      const dev = makeUser();
+      const existing = [
+        makeTask({ id: 'task-a' }),
+        makeTask({ id: 'task-b' }),
+        makeTask({ id: 'task-c' }),
+      ];
+      mockProjectAccessService.assertCanRead.mockResolvedValue(undefined);
+      mockTasksRepository.find.mockResolvedValue(existing);
+
+      const dto: ReorderColumnDto = {
+        status: TaskStatus.TODO,
+        taskIds: ['task-a', 'task-b'], // falta 'task-c'
+      };
+
+      await expect(
+        service.reorderColumn('proj-uuid-1', dto, dev),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockTasksRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('propaga ForbiddenException/NotFoundException de assertCanRead sin tocar la columna', async () => {
+      const dev = makeUser();
+      mockProjectAccessService.assertCanRead.mockRejectedValue(
+        new ForbiddenException('You are not a member of this project'),
+      );
+
+      const dto: ReorderColumnDto = {
+        status: TaskStatus.TODO,
+        taskIds: ['task-a'],
+      };
+
+      await expect(
+        service.reorderColumn('proj-uuid-1', dto, dev),
+      ).rejects.toThrow(ForbiddenException);
+      expect(mockTasksRepository.find).not.toHaveBeenCalled();
     });
   });
 });

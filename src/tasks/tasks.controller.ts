@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
   Param,
   Patch,
   Post,
@@ -17,6 +18,7 @@ import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
 import { User, UserRole } from '../users/users.entity';
 import { CreateTaskDto } from './dto/create-task.dto';
+import { ReorderColumnDto } from './dto/reorder-column.dto';
 import { TaskListQueryDto } from './dto/task-list-query.dto';
 import { TaskResponseDto } from './dto/task-response.dto';
 import { UpdateEstimateDto } from './dto/update-estimate.dto';
@@ -69,6 +71,18 @@ export class TasksController {
     query: PaginationQueryDto,
   ): Promise<PaginatedResponseDto<TaskResponseDto>> {
     return this.tasksService.findByProject(projectId, currentUser, query);
+  }
+
+  // PATCH /tasks/project/:projectId/reorder — persiste el nuevo orden visual
+  // de una columna del kanban tras un drag-and-drop (JWT, cualquier miembro del proyecto)
+  @Patch('project/:projectId/reorder')
+  @HttpCode(204)
+  reorderColumn(
+    @Param('projectId') projectId: string,
+    @Body() dto: ReorderColumnDto,
+    @CurrentUser() currentUser: User,
+  ): Promise<void> {
+    return this.tasksService.reorderColumn(projectId, dto, currentUser);
   }
 
   // PATCH /tasks/:id — actualización parcial de cualquier campo (solo admin)

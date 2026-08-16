@@ -14,6 +14,7 @@ import { Project } from '../projects/projects.entity';
 import { ProjectAccessService } from '../projects/project-access.service';
 import { User } from '../users/users.entity';
 import { CreateTaskDto } from './dto/create-task.dto';
+import { ReorderColumnDto } from './dto/reorder-column.dto';
 import { TaskListQueryDto } from './dto/task-list-query.dto';
 import { TaskResponseDto } from './dto/task-response.dto';
 import { UpdateEstimateDto } from './dto/update-estimate.dto';
@@ -58,6 +59,7 @@ export class TasksService {
       assigneeId: dto.assigneeId ?? null,
       estimatedHours: dto.estimatedHours ?? null,
       dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
+      position: await this.nextPositionInColumn(dto.projectId, TaskStatus.TODO),
     });
 
     const saved = await this.tasksRepository.save(task);
@@ -103,6 +105,8 @@ export class TasksService {
   // propósito: el dev asignado necesita ver que su tarea fue cancelada en vez de
   // que desaparezca sin rastro; el volumen por dev no crece sin control (sin
   // sprints todavía) así que no amerita filtrarlas por ahora.
+  // Orden por `position` (orden visual del kanban dentro de cada columna, ver
+  // reorderColumn) con createdAt como desempate estable para filas nunca reordenadas.
   async findByProject(
     projectId: string,
     currentUser: User,
@@ -118,7 +122,7 @@ export class TasksService {
         projectId,
       },
       relations: { project: true, assignee: true },
-      order: { createdAt: 'ASC' },
+      order: { position: 'ASC', createdAt: 'ASC' },
       skip,
       take,
     });
@@ -161,6 +165,18 @@ export class TasksService {
         'A completed task cannot change status. Create a new task instead.',
       );
     }
+  }
+
+  // Posición al final de una columna (projectId+status) — usada al crear una tarea
+  // y en cada cambio de status, para que la tarea entrante nunca colisione con
+  // el `position` de una ya existente en su columna destino. Es segura sin
+  // reconsultar el máximo real porque `reorderColumn` siempre renumera el set
+  // completo de la columna como 0..n-1: el COUNT nunca deja huecos.
+  private async nextPositionInColumn(
+    projectId: string,
+    status: TaskStatus,
+  ): Promise<number> {
+    return this.tasksRepository.count({ where: { projectId, status } });
   }
 
   // Estampa completedAt la primera vez que la tarea transiciona a done. No hay rama
@@ -219,7 +235,13 @@ export class TasksService {
     if (dto.title !== undefined) task.title = dto.title;
     if (dto.description !== undefined)
       task.description = dto.description ?? null;
-    if (dto.status !== undefined) {
+    if (dto.status !== undefined && dto.status !== task.status) {
+      // La tarea entra al final de su columna destino — nunca conserva el
+      // `position` de la columna de origen (ver nextPositionInColumn).
+      task.position = await this.nextPositionInColumn(
+        dto.projectId ?? task.projectId,
+        dto.status,
+      );
       this.stampCompletionIfNeeded(task, dto.status);
       task.status = dto.status;
     }
@@ -268,6 +290,14 @@ export class TasksService {
     this.assertStatusTransitionAllowed(task.status, dto.status);
 
     const previousStatus = task.status;
+    if (dto.status !== previousStatus) {
+      // Entra al final de la columna destino (ver nextPositionInColumn) —
+      // nunca conserva el `position` de la columna de origen.
+      task.position = await this.nextPositionInColumn(
+        task.projectId,
+        dto.status,
+      );
+    }
     this.stampCompletionIfNeeded(task, dto.status);
     task.status = dto.status;
     const saved = await this.tasksRepository.save(task);
@@ -309,9 +339,56 @@ export class TasksService {
 
     this.assertStatusTransitionAllowed(task.status, TaskStatus.CANCELLED);
 
+    task.position = await this.nextPositionInColumn(
+      task.projectId,
+      TaskStatus.CANCELLED,
+    );
     task.status = TaskStatus.CANCELLED;
     const saved = await this.tasksRepository.save(task);
     this.logger.info({ taskId: id }, 'Task cancelled');
     return TaskResponseDto.from(saved);
+  }
+
+  // Persiste el nuevo orden visual de una columna del kanban tras un
+  // drag-and-drop dentro de la misma columna. `taskIds` debe ser exactamente
+  // el mismo conjunto de IDs que ya existe en projectId+status (protección
+  // contra datos obsoletos: si el board cambió entre el fetch y el drop, se
+  // rechaza con 400 en vez de reordenar a ciegas). Cualquier miembro del
+  // proyecto puede reordenar la columna compartida — es una decisión de
+  // layout visual, no una edición de campos de la tarea de otro dev.
+  async reorderColumn(
+    projectId: string,
+    dto: ReorderColumnDto,
+    currentUser: User,
+  ): Promise<void> {
+    await this.projectAccessService.assertCanRead(projectId, currentUser, {
+      allowAdmin: false,
+    });
+
+    const existing = await this.tasksRepository.find({
+      where: { projectId, status: dto.status },
+      select: { id: true },
+    });
+    const existingIds = new Set(existing.map((t) => t.id));
+    const incomingIds = new Set(dto.taskIds);
+
+    if (
+      existingIds.size !== incomingIds.size ||
+      dto.taskIds.some((id) => !existingIds.has(id))
+    ) {
+      throw new BadRequestException(
+        'El tablero cambió desde que se cargó. Recargá la página e intentá de nuevo.',
+      );
+    }
+
+    await Promise.all(
+      dto.taskIds.map((id, index) =>
+        this.tasksRepository.update(id, { position: index }),
+      ),
+    );
+    this.logger.info(
+      { projectId, status: dto.status, userId: currentUser.id },
+      'Kanban column reordered',
+    );
   }
 }
