@@ -377,7 +377,7 @@ describe('TasksService', () => {
   // ── findByProject ────────────────────────────────────────────────────────────
 
   describe('findByProject', () => {
-    it('devuelve tareas no canceladas paginadas cuando el usuario es miembro', async () => {
+    it('devuelve tareas paginadas cuando el usuario es miembro', async () => {
       const dev = makeUser();
       const tasks = [makeTask({ status: TaskStatus.IN_PROGRESS })];
 
@@ -433,26 +433,28 @@ describe('TasksService', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
-    it('excluye tareas canceladas de los resultados', async () => {
+    it('incluye tareas canceladas en los resultados', async () => {
       const dev = makeUser();
-      // Solo devuelve tareas no canceladas (el where excluye CANCELLED)
+      // El dev asignado debe ver que su tarea fue cancelada en vez de que
+      // desaparezca sin rastro — el where ya no excluye CANCELLED.
       mockProjectAccessService.assertCanRead.mockResolvedValue(undefined);
       mockTasksRepository.findAndCount.mockResolvedValue([
-        [makeTask({ status: TaskStatus.TODO })],
-        1,
+        [
+          makeTask({ status: TaskStatus.TODO }),
+          makeTask({ id: 'task-uuid-2', status: TaskStatus.CANCELLED }),
+        ],
+        2,
       ]);
 
       const result = await service.findByProject('proj-uuid-1', dev, {});
 
-      // Verifica que la query incluyó la exclusión de CANCELLED
+      // Verifica que la query no filtra por status (solo por projectId)
       expect(mockTasksRepository.findAndCount).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({
-            projectId: 'proj-uuid-1',
-          }) as FindManyOptions<Task>['where'],
+          where: { projectId: 'proj-uuid-1' } as FindManyOptions<Task>['where'],
         }),
       );
-      expect(result.data.every((t) => t.status !== TaskStatus.CANCELLED)).toBe(
+      expect(result.data.some((t) => t.status === TaskStatus.CANCELLED)).toBe(
         true,
       );
     });
@@ -781,21 +783,22 @@ describe('TasksService', () => {
       expect(result.status).toBe(TaskStatus.DONE);
     });
 
-    it('permite transiciones libres desde cancelled (no es terminal)', async () => {
+    it('lanza BadRequestException (400) al intentar cambiar el estado de una tarea cancelada', async () => {
+      // El dev ve las canceladas en modo lectura; reabrirlas es decisión del
+      // admin vía updateTask, nunca de este endpoint.
       const dev = makeUser();
       const task = makeTask({
         assigneeId: dev.id,
         status: TaskStatus.CANCELLED,
       });
       const dto: UpdateStatusDto = { status: TaskStatus.TODO };
-      const saved = makeTask({ assigneeId: dev.id, status: TaskStatus.TODO });
 
       mockTasksRepository.findOne.mockResolvedValue(task);
-      mockTasksRepository.save.mockResolvedValue(saved);
 
-      const result = await service.updateStatus('task-uuid-1', dto, dev);
-
-      expect(result.status).toBe(TaskStatus.TODO);
+      await expect(
+        service.updateStatus('task-uuid-1', dto, dev),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockTasksRepository.save).not.toHaveBeenCalled();
     });
 
     it('estampa completedAt al transicionar in_progress -> done', async () => {
@@ -885,6 +888,22 @@ describe('TasksService', () => {
     it('lanza BadRequestException (400) al intentar actualizar la estimación de una tarea done', async () => {
       const dev = makeUser();
       const task = makeTask({ assigneeId: dev.id, status: TaskStatus.DONE });
+      const dto: UpdateEstimateDto = { estimatedHours: 4 };
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+
+      await expect(
+        service.updateEstimate('task-uuid-1', dto, dev),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockTasksRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('lanza BadRequestException (400) al intentar actualizar la estimación de una tarea cancelled', async () => {
+      const dev = makeUser();
+      const task = makeTask({
+        assigneeId: dev.id,
+        status: TaskStatus.CANCELLED,
+      });
       const dto: UpdateEstimateDto = { estimatedHours: 4 };
 
       mockTasksRepository.findOne.mockResolvedValue(task);

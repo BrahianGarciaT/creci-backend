@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { PinoLogger } from 'nestjs-pino';
-import { FindOptionsWhere, Not, Repository } from 'typeorm';
+import { FindOptionsWhere, Repository } from 'typeorm';
 import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
 import { resolvePagination } from '../common/pagination';
@@ -98,7 +98,11 @@ export class TasksService {
     );
   }
 
-  // Devuelve tareas no canceladas de un proyecto, paginadas; verifica que el usuario sea miembro del proyecto
+  // Devuelve todas las tareas de un proyecto (incluidas las canceladas), paginadas;
+  // verifica que el usuario sea miembro del proyecto. Las canceladas se incluyen a
+  // propósito: el dev asignado necesita ver que su tarea fue cancelada en vez de
+  // que desaparezca sin rastro; el volumen por dev no crece sin control (sin
+  // sprints todavía) así que no amerita filtrarlas por ahora.
   async findByProject(
     projectId: string,
     currentUser: User,
@@ -112,7 +116,6 @@ export class TasksService {
     const [tasks, total] = await this.tasksRepository.findAndCount({
       where: {
         projectId,
-        status: Not(TaskStatus.CANCELLED),
       },
       relations: { project: true, assignee: true },
       order: { createdAt: 'ASC' },
@@ -254,6 +257,14 @@ export class TasksService {
       );
     }
 
+    // El dev solo ve las canceladas en modo lectura: reabrirlas (cancelled -> *)
+    // es una decisión del admin (vía updateTask), nunca de este endpoint.
+    if (task.status === TaskStatus.CANCELLED) {
+      throw new BadRequestException(
+        'No se puede cambiar el estado de una tarea cancelada.',
+      );
+    }
+
     this.assertStatusTransitionAllowed(task.status, dto.status);
 
     const previousStatus = task.status;
@@ -280,9 +291,9 @@ export class TasksService {
       throw new ForbiddenException('You are not the assignee of this task');
     }
 
-    if (task.status === TaskStatus.DONE) {
+    if (task.status === TaskStatus.DONE || task.status === TaskStatus.CANCELLED) {
       throw new BadRequestException(
-        'No se puede modificar una tarea completada. Crea una nueva tarea en su lugar.',
+        'No se puede modificar la estimación de una tarea completada o cancelada.',
       );
     }
 
