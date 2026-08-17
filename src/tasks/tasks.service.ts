@@ -6,12 +6,17 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { PinoLogger } from 'nestjs-pino';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
 import { resolvePagination } from '../common/pagination';
 import { Project } from '../projects/projects.entity';
 import { ProjectAccessService } from '../projects/project-access.service';
 import { User } from '../users/users.entity';
+import {
+  TaskMovement,
+  TaskMovementActorKind,
+  TaskMovementKind,
+} from './task-movement.entity';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { ProjectTaskListQueryDto } from './dto/project-task-list-query.dto';
 import { ReorderColumnDto } from './dto/reorder-column.dto';
@@ -20,6 +25,15 @@ import { UpdateEstimateDto } from './dto/update-estimate.dto';
 import { UpdateStatusDto } from './dto/update-status.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { isStatusTransitionAllowed, Task, TaskStatus } from './tasks.entity';
+
+// Un cambio auditable pendiente de persistir, detectado ANTES de mutar la
+// entidad Task. `previousValue`/`newValue` ya están codificados como texto
+// según el contrato por `kind` (ver task-movement.entity.ts).
+type PendingMovement = {
+  kind: TaskMovementKind;
+  previousValue: string | null;
+  newValue: string | null;
+};
 
 @Injectable()
 export class TasksService {
@@ -193,8 +207,103 @@ export class TasksService {
     }
   }
 
-  // Actualización parcial completa de una tarea (solo admin)
-  async update(id: string, dto: UpdateTaskDto): Promise<TaskResponseDto> {
+  // Compara la tarea ANTES de mutarla contra el dto entrante y devuelve solo
+  // los cambios reales (old !== new, no solo "campo presente"). Compartida
+  // entre update() (admin) y updateEstimate() (dev). DEBE ejecutarse antes de
+  // asignar campos sobre `task`, porque update() muta la entidad in place.
+  private collectFieldMovements(
+    task: Task,
+    dto: UpdateTaskDto | UpdateEstimateDto,
+  ): PendingMovement[] {
+    const movements: PendingMovement[] = [];
+    // UpdateEstimateDto no trae status/dueDate/assigneeId; el cast solo
+    // habilita el acceso opcional, no fuerza a que existan en runtime.
+    const taskDto = dto as UpdateTaskDto;
+
+    if (taskDto.status !== undefined && taskDto.status !== task.status) {
+      movements.push({
+        kind: TaskMovementKind.STATUS_CHANGE,
+        previousValue: task.status,
+        newValue: taskDto.status,
+      });
+    }
+
+    if (taskDto.dueDate !== undefined) {
+      // undefined = "sin cambio"; null/'' explícito = "limpiar".
+      const prevDue = task.dueDate?.getTime() ?? null;
+      const nextDueDate = taskDto.dueDate ? new Date(taskDto.dueDate) : null;
+      const nextDue = nextDueDate?.getTime() ?? null;
+      if (prevDue !== nextDue) {
+        movements.push({
+          kind: TaskMovementKind.DUE_DATE_CHANGE,
+          previousValue: task.dueDate ? task.dueDate.toISOString() : null,
+          newValue: nextDueDate ? nextDueDate.toISOString() : null,
+        });
+      }
+    }
+
+    if (dto.estimatedHours !== undefined) {
+      // GOTCHA: estimated_hours es numeric -> TypeORM lo hidrata como string
+      // (ver tasks.entity.ts:67). Sin Number(), '8' !== 8 sería siempre true
+      // y toda escritura no-op produciría una fila de auditoría fantasma.
+      const prevHours =
+        task.estimatedHours === null ? null : Number(task.estimatedHours);
+      const nextHours = dto.estimatedHours ?? null;
+      if (prevHours !== nextHours) {
+        movements.push({
+          kind: TaskMovementKind.ESTIMATE_CHANGE,
+          previousValue: prevHours === null ? null : String(prevHours),
+          newValue: nextHours === null ? null : String(nextHours),
+        });
+      }
+    }
+
+    if (taskDto.assigneeId !== undefined) {
+      const nextAssignee = taskDto.assigneeId ?? null;
+      if (nextAssignee !== task.assigneeId) {
+        movements.push({
+          kind: TaskMovementKind.ASSIGNEE_CHANGE,
+          previousValue: task.assigneeId,
+          newValue: nextAssignee,
+        });
+      }
+    }
+
+    return movements;
+  }
+
+  // Inserta 0..n filas de auditoría con actorKind='user', dentro de la misma
+  // transacción que la mutación. No-op si no hay movimientos reales.
+  private async recordMovements(
+    manager: EntityManager,
+    task: Task,
+    actorUserId: string,
+    movements: PendingMovement[],
+  ): Promise<void> {
+    if (movements.length === 0) return;
+
+    await manager.insert(
+      TaskMovement,
+      movements.map((movement) => ({
+        taskId: task.id,
+        projectId: task.projectId,
+        actorKind: TaskMovementActorKind.USER,
+        actorUserId,
+        kind: movement.kind,
+        previousValue: movement.previousValue,
+        newValue: movement.newValue,
+      })),
+    );
+  }
+
+  // Actualización parcial completa de una tarea (solo admin). La mutación y
+  // el registro de auditoría comparten transacción: si el insert de
+  // TaskMovement falla, la actualización de la tarea se revierte.
+  async update(
+    id: string,
+    dto: UpdateTaskDto,
+    currentUser: User,
+  ): Promise<TaskResponseDto> {
     const task = await this.tasksRepository.findOne({ where: { id } });
     if (!task) throw new NotFoundException('Task not found');
 
@@ -214,6 +323,9 @@ export class TasksService {
         effectiveAssigneeId,
       );
     }
+
+    // Debe capturarse ANTES de mutar `task` más abajo.
+    const movements = this.collectFieldMovements(task, dto);
 
     if (dto.title !== undefined) task.title = dto.title;
     if (dto.description !== undefined)
@@ -236,7 +348,13 @@ export class TasksService {
     if (dto.projectId !== undefined) task.projectId = dto.projectId;
     if (dto.assigneeId !== undefined) task.assigneeId = dto.assigneeId ?? null;
 
-    const saved = await this.tasksRepository.save(task);
+    const saved = await this.tasksRepository.manager.transaction(
+      async (manager) => {
+        const savedTask = await manager.save(task);
+        await this.recordMovements(manager, task, currentUser.id, movements);
+        return savedTask;
+      },
+    );
     this.logger.info({ taskId: id }, 'Task updated');
     return TaskResponseDto.from(saved);
   }
@@ -273,7 +391,8 @@ export class TasksService {
     this.assertStatusTransitionAllowed(task.status, dto.status);
 
     const previousStatus = task.status;
-    if (dto.status !== previousStatus) {
+    const statusChanged = dto.status !== previousStatus;
+    if (statusChanged) {
       // Entra al final de la columna destino (ver nextPositionInColumn) —
       // nunca conserva el `position` de la columna de origen.
       task.position = await this.nextPositionInColumn(
@@ -283,7 +402,25 @@ export class TasksService {
     }
     this.stampCompletionIfNeeded(task, dto.status);
     task.status = dto.status;
-    const saved = await this.tasksRepository.save(task);
+
+    const saved = await this.tasksRepository.manager.transaction(
+      async (manager) => {
+        const savedTask = await manager.save(task);
+        // No-op guard: el no-op done -> done no escribe auditoría.
+        if (statusChanged) {
+          await manager.insert(TaskMovement, {
+            taskId: task.id,
+            projectId: task.projectId,
+            actorKind: TaskMovementActorKind.USER,
+            actorUserId: currentUser.id,
+            kind: TaskMovementKind.STATUS_CHANGE,
+            previousValue: previousStatus,
+            newValue: dto.status,
+          });
+        }
+        return savedTask;
+      },
+    );
     this.logger.info(
       {
         taskId: id,
@@ -318,24 +455,54 @@ export class TasksService {
       );
     }
 
+    const movements = this.collectFieldMovements(task, dto);
+
     task.estimatedHours = dto.estimatedHours;
-    const saved = await this.tasksRepository.save(task);
+
+    const saved = await this.tasksRepository.manager.transaction(
+      async (manager) => {
+        const savedTask = await manager.save(task);
+        await this.recordMovements(manager, task, currentUser.id, movements);
+        return savedTask;
+      },
+    );
     return TaskResponseDto.from(saved);
   }
 
   // Soft-cancel: establece status = CANCELLED sin eliminar la fila (solo admin)
-  async softCancel(id: string): Promise<TaskResponseDto> {
+  async softCancel(id: string, currentUser: User): Promise<TaskResponseDto> {
     const task = await this.tasksRepository.findOne({ where: { id } });
     if (!task) throw new NotFoundException('Task not found');
 
     this.assertStatusTransitionAllowed(task.status, TaskStatus.CANCELLED);
 
+    // No-op guard: cancelar una tarea ya cancelada no debe escribir auditoría.
+    if (task.status === TaskStatus.CANCELLED) {
+      return TaskResponseDto.from(task);
+    }
+
+    const previousStatus = task.status;
     task.position = await this.nextPositionInColumn(
       task.projectId,
       TaskStatus.CANCELLED,
     );
     task.status = TaskStatus.CANCELLED;
-    const saved = await this.tasksRepository.save(task);
+
+    const saved = await this.tasksRepository.manager.transaction(
+      async (manager) => {
+        const savedTask = await manager.save(task);
+        await manager.insert(TaskMovement, {
+          taskId: task.id,
+          projectId: task.projectId,
+          actorKind: TaskMovementActorKind.USER,
+          actorUserId: currentUser.id,
+          kind: TaskMovementKind.CANCELLED,
+          previousValue: previousStatus,
+          newValue: TaskStatus.CANCELLED,
+        });
+        return savedTask;
+      },
+    );
     this.logger.info({ taskId: id }, 'Task cancelled');
     return TaskResponseDto.from(saved);
   }

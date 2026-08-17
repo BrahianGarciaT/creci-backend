@@ -8,6 +8,7 @@ import { validate } from './config/env.validation';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { Project } from './projects/projects.entity';
 import { ProjectsModule } from './projects/projects.module';
+import { TaskMovement } from './tasks/task-movement.entity';
 import { Task } from './tasks/tasks.entity';
 import { TasksModule } from './tasks/tasks.module';
 import { User } from './users/users.entity';
@@ -27,7 +28,9 @@ import { LoggerModule } from './logger/logger.module';
         username: config.getOrThrow<string>('DB_USER'),
         password: config.getOrThrow<string>('DB_PASSWORD'),
         database: config.getOrThrow<string>('DB_NAME'),
-        entities: [User, Project, Task],
+        // TaskMovement debe estar aquí: con synchronize: true, la tabla
+        // task_movements solo se crea si la entidad figura en este array.
+        entities: [User, Project, Task, TaskMovement],
         synchronize: true,
       }),
     }),

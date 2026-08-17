@@ -75,8 +75,9 @@ export class TasksController {
   update(
     @Param('id') id: string,
     @Body() dto: UpdateTaskDto,
+    @CurrentUser() currentUser: User,
   ): Promise<TaskResponseDto> {
-    return this.tasksService.update(id, dto);
+    return this.tasksService.update(id, dto, currentUser);
   }
 
   // PATCH /tasks/:id/status — el asignado actualiza el status (JWT, no CANCELLED)
@@ -102,7 +103,10 @@ export class TasksController {
   // DELETE /tasks/:id — soft-cancel (solo admin); la fila se conserva con status CANCELLED
   @Delete(':id')
   @Roles(UserRole.ADMIN)
-  softCancel(@Param('id') id: string): Promise<TaskResponseDto> {
-    return this.tasksService.softCancel(id);
+  softCancel(
+    @Param('id') id: string,
+    @CurrentUser() currentUser: User,
+  ): Promise<TaskResponseDto> {
+    return this.tasksService.softCancel(id, currentUser);
   }
 }

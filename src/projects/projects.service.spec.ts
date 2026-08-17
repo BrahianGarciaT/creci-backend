@@ -3,6 +3,11 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { PinoLogger } from 'nestjs-pino';
 import { In, Not } from 'typeorm';
+import {
+  TaskMovement,
+  TaskMovementActorKind,
+  TaskMovementKind,
+} from '../tasks/task-movement.entity';
 import { Task, TaskStatus } from '../tasks/tasks.entity';
 import { User, UserRole } from '../users/users.entity';
 import { AssignDevelopersDto } from './dto/assign-developers.dto';
@@ -46,6 +51,10 @@ function makeUser(overrides: Partial<User> = {}): User {
 const mockManager = {
   save: jest.fn(),
   update: jest.fn(),
+  // find/insert: usados por clearAssigneeForRemovedDevelopers (select-then-
+  // update-then-insert). Default: sin tareas afectadas (no dispara auditoría).
+  find: jest.fn().mockResolvedValue([]),
+  insert: jest.fn().mockResolvedValue(undefined),
 };
 
 const mockProjectsRepository = {
@@ -426,6 +435,9 @@ describe('ProjectsService', () => {
         .mockResolvedValueOnce(withRelations);
       mockUsersRepository.find.mockResolvedValue([keptDev]);
       mockManager.save.mockResolvedValue(project);
+      mockManager.find.mockResolvedValue([
+        { id: 'task-1', projectId: 'proj-uuid-1', assigneeId: 'user-removed' },
+      ]);
       mockManager.update.mockResolvedValue({ affected: 1 });
 
       const dto: AssignDevelopersDto = { developerIds: ['user-kept'] };
@@ -455,7 +467,10 @@ describe('ProjectsService', () => {
         .mockResolvedValueOnce(project)
         .mockResolvedValueOnce(withRelations);
       mockManager.save.mockResolvedValue(project);
-      mockManager.update.mockResolvedValue({ affected: 0 });
+      mockManager.find.mockResolvedValue([
+        { id: 'task-1', projectId: 'proj-uuid-1', assigneeId: 'user-removed' },
+      ]);
+      mockManager.update.mockResolvedValue({ affected: 1 });
 
       const dto: AssignDevelopersDto = { developerIds: [] };
       await service.assignDevelopers('proj-uuid-1', dto);
@@ -479,6 +494,9 @@ describe('ProjectsService', () => {
         .mockResolvedValueOnce(project)
         .mockResolvedValueOnce(withRelations);
       mockManager.save.mockResolvedValue(project);
+      mockManager.find.mockResolvedValue([
+        { id: 'task-1', projectId: 'proj-scoped', assigneeId: 'user-removed' },
+      ]);
       mockManager.update.mockResolvedValue({ affected: 1 });
 
       const dto: AssignDevelopersDto = { developerIds: [] };
@@ -520,6 +538,18 @@ describe('ProjectsService', () => {
         .mockResolvedValueOnce(project)
         .mockResolvedValueOnce(withRelations);
       mockManager.save.mockResolvedValue(project);
+      mockManager.find.mockResolvedValue([
+        {
+          id: 'task-1',
+          projectId: 'proj-uuid-1',
+          assigneeId: 'user-removed-1',
+        },
+        {
+          id: 'task-2',
+          projectId: 'proj-uuid-1',
+          assigneeId: 'user-removed-2',
+        },
+      ]);
       mockManager.update.mockResolvedValue({ affected: 2 });
 
       const dto: AssignDevelopersDto = { developerIds: [] };
@@ -537,6 +567,54 @@ describe('ProjectsService', () => {
         }),
         { assigneeId: null },
       );
+    });
+
+    it('remover un developer del proyecto produce una fila de auditoría con actorKind system (no el admin que hizo el cambio)', async () => {
+      const removedDev = makeUser({ id: 'user-removed' });
+      const project = makeProject({ developers: [removedDev] });
+      const withRelations = makeProject({ developers: [] });
+
+      mockProjectsRepository.findOne
+        .mockResolvedValueOnce(project)
+        .mockResolvedValueOnce(withRelations);
+      mockManager.save.mockResolvedValue(project);
+      mockManager.find.mockResolvedValue([
+        { id: 'task-1', projectId: 'proj-uuid-1', assigneeId: 'user-removed' },
+      ]);
+      mockManager.update.mockResolvedValue({ affected: 1 });
+
+      const dto: AssignDevelopersDto = { developerIds: [] };
+      await service.assignDevelopers('proj-uuid-1', dto);
+
+      expect(mockManager.insert).toHaveBeenCalledWith(TaskMovement, [
+        {
+          taskId: 'task-1',
+          projectId: 'proj-uuid-1',
+          actorKind: TaskMovementActorKind.SYSTEM,
+          actorUserId: null,
+          kind: TaskMovementKind.ASSIGNEE_CHANGE,
+          previousValue: 'user-removed',
+          newValue: null,
+        },
+      ]);
+    });
+
+    it('cero tareas afectadas: no llama a insert de auditoría', async () => {
+      const removedDev = makeUser({ id: 'user-removed' });
+      const project = makeProject({ developers: [removedDev] });
+      const withRelations = makeProject({ developers: [] });
+
+      mockProjectsRepository.findOne
+        .mockResolvedValueOnce(project)
+        .mockResolvedValueOnce(withRelations);
+      mockManager.save.mockResolvedValue(project);
+      mockManager.find.mockResolvedValue([]);
+
+      const dto: AssignDevelopersDto = { developerIds: [] };
+      await service.assignDevelopers('proj-uuid-1', dto);
+
+      expect(mockManager.update).not.toHaveBeenCalled();
+      expect(mockManager.insert).not.toHaveBeenCalled();
     });
   });
 });
