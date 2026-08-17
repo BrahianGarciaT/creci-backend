@@ -10,6 +10,11 @@ import { FindManyOptions } from 'typeorm';
 import { Project, ProjectStatus } from '../projects/projects.entity';
 import { ProjectAccessService } from '../projects/project-access.service';
 import { User, UserRole } from '../users/users.entity';
+import {
+  TaskMovement,
+  TaskMovementActorKind,
+  TaskMovementKind,
+} from './task-movement.entity';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { ReorderColumnDto } from './dto/reorder-column.dto';
 import { UpdateEstimateDto } from './dto/update-estimate.dto';
@@ -70,6 +75,15 @@ function makeTask(overrides: Partial<Task> = {}): Task {
 
 // ── Mocks de repositorios ──────────────────────────────────────────────────────
 
+// Mock del EntityManager usado dentro de manager.transaction() en
+// update/updateStatus/updateEstimate/softCancel — save() persiste la tarea,
+// insert() escribe las filas de auditoría (TaskMovement), ambos dentro de la
+// misma transacción.
+const mockManager = {
+  save: jest.fn<Promise<Task>, [Task]>(),
+  insert: jest.fn(),
+};
+
 const mockTasksRepository = {
   find: jest.fn(),
   findOne: jest.fn(),
@@ -78,6 +92,11 @@ const mockTasksRepository = {
   create: jest.fn(),
   save: jest.fn(),
   update: jest.fn(),
+  manager: {
+    transaction: jest.fn((cb: (manager: typeof mockManager) => unknown) =>
+      cb(mockManager),
+    ),
+  },
 };
 
 const mockProjectsRepository = {
@@ -123,6 +142,10 @@ describe('TasksService', () => {
     service = module.get<TasksService>(TasksService);
     // Default: la columna destino está vacía (position 0) salvo que un test lo pise
     mockTasksRepository.count.mockResolvedValue(0);
+    // Default: manager.save devuelve la misma entidad que recibió (idéntico a
+    // repository.save en la mayoría de los tests existentes).
+    mockManager.save.mockImplementation((t: Task) => Promise.resolve(t));
+    mockManager.insert.mockResolvedValue(undefined);
   });
 
   afterEach(() => jest.clearAllMocks());
@@ -455,15 +478,17 @@ describe('TasksService', () => {
   // ── update ───────────────────────────────────────────────────────────────────
 
   describe('update', () => {
+    const admin = makeUser({ id: 'admin-uuid-1', role: UserRole.ADMIN });
+
     it('actualiza campos parciales y devuelve el DTO', async () => {
       const task = makeTask();
       const dto: UpdateTaskDto = { title: 'Título actualizado' };
       const saved = makeTask({ title: 'Título actualizado' });
 
       mockTasksRepository.findOne.mockResolvedValue(task);
-      mockTasksRepository.save.mockResolvedValue(saved);
+      mockManager.save.mockResolvedValue(saved);
 
-      const result = await service.update('task-uuid-1', dto);
+      const result = await service.update('task-uuid-1', dto, admin);
 
       expect(result.title).toBe('Título actualizado');
     });
@@ -471,7 +496,7 @@ describe('TasksService', () => {
     it('lanza NotFoundException (404) cuando la tarea no existe', async () => {
       mockTasksRepository.findOne.mockResolvedValue(null);
 
-      await expect(service.update('nonexistent', {})).rejects.toThrow(
+      await expect(service.update('nonexistent', {}, admin)).rejects.toThrow(
         NotFoundException,
       );
     });
@@ -482,10 +507,10 @@ describe('TasksService', () => {
 
       mockTasksRepository.findOne.mockResolvedValue(task);
 
-      await expect(service.update('task-uuid-1', dto)).rejects.toThrow(
+      await expect(service.update('task-uuid-1', dto, admin)).rejects.toThrow(
         BadRequestException,
       );
-      expect(mockTasksRepository.save).not.toHaveBeenCalled();
+      expect(mockManager.save).not.toHaveBeenCalled();
     });
 
     it('permite el no-op done -> done', async () => {
@@ -494,11 +519,13 @@ describe('TasksService', () => {
       const saved = makeTask({ status: TaskStatus.DONE });
 
       mockTasksRepository.findOne.mockResolvedValue(task);
-      mockTasksRepository.save.mockResolvedValue(saved);
+      mockManager.save.mockResolvedValue(saved);
 
-      const result = await service.update('task-uuid-1', dto);
+      const result = await service.update('task-uuid-1', dto, admin);
 
       expect(result.status).toBe(TaskStatus.DONE);
+      // status DONE -> DONE es un no-op: no debe auditarse
+      expect(mockManager.insert).not.toHaveBeenCalled();
     });
 
     it('lanza BadRequestException (400) al intentar editar cualquier campo de una tarea done', async () => {
@@ -507,10 +534,10 @@ describe('TasksService', () => {
 
       mockTasksRepository.findOne.mockResolvedValue(task);
 
-      await expect(service.update('task-uuid-1', dto)).rejects.toThrow(
+      await expect(service.update('task-uuid-1', dto, admin)).rejects.toThrow(
         BadRequestException,
       );
-      expect(mockTasksRepository.save).not.toHaveBeenCalled();
+      expect(mockManager.save).not.toHaveBeenCalled();
     });
 
     it('permite reabrir una tarea cancelled (no es terminal)', async () => {
@@ -519,9 +546,9 @@ describe('TasksService', () => {
       const saved = makeTask({ status: TaskStatus.TODO });
 
       mockTasksRepository.findOne.mockResolvedValue(task);
-      mockTasksRepository.save.mockResolvedValue(saved);
+      mockManager.save.mockResolvedValue(saved);
 
-      const result = await service.update('task-uuid-1', dto);
+      const result = await service.update('task-uuid-1', dto, admin);
 
       expect(result.status).toBe(TaskStatus.TODO);
     });
@@ -531,15 +558,12 @@ describe('TasksService', () => {
       const dto: UpdateTaskDto = { status: TaskStatus.DONE };
 
       mockTasksRepository.findOne.mockResolvedValue(task);
-      mockTasksRepository.save.mockImplementation((t: Task) =>
-        Promise.resolve(t),
-      );
 
-      const result = await service.update('task-uuid-1', dto);
+      const result = await service.update('task-uuid-1', dto, admin);
 
       expect(result.status).toBe(TaskStatus.DONE);
       expect(result.completedAt).toBeInstanceOf(Date);
-      expect(mockTasksRepository.save).toHaveBeenCalledWith(
+      expect(mockManager.save).toHaveBeenCalledWith(
         expect.objectContaining({
           completedAt: expect.any(Date) as Date,
         }),
@@ -551,11 +575,8 @@ describe('TasksService', () => {
       const dto: UpdateTaskDto = { status: TaskStatus.IN_PROGRESS };
 
       mockTasksRepository.findOne.mockResolvedValue(task);
-      mockTasksRepository.save.mockImplementation((t: Task) =>
-        Promise.resolve(t),
-      );
 
-      const result = await service.update('task-uuid-1', dto);
+      const result = await service.update('task-uuid-1', dto, admin);
 
       expect(result.status).toBe(TaskStatus.IN_PROGRESS);
       expect(result.completedAt).toBeNull();
@@ -573,10 +594,10 @@ describe('TasksService', () => {
         }),
       );
 
-      await expect(service.update('task-uuid-1', dto)).rejects.toThrow(
+      await expect(service.update('task-uuid-1', dto, admin)).rejects.toThrow(
         BadRequestException,
       );
-      expect(mockTasksRepository.save).not.toHaveBeenCalled();
+      expect(mockManager.save).not.toHaveBeenCalled();
     });
 
     it('lanza BadRequestException (400) cuando cambia solo el proyecto y el assignee actual queda stale', async () => {
@@ -594,14 +615,14 @@ describe('TasksService', () => {
         }),
       );
 
-      await expect(service.update('task-uuid-1', dto)).rejects.toThrow(
+      await expect(service.update('task-uuid-1', dto, admin)).rejects.toThrow(
         BadRequestException,
       );
       expect(mockProjectsRepository.findOne).toHaveBeenCalledWith({
         where: { id: 'proj-uuid-2' },
         relations: { developers: true },
       });
-      expect(mockTasksRepository.save).not.toHaveBeenCalled();
+      expect(mockManager.save).not.toHaveBeenCalled();
     });
 
     it('valida contra el nuevo proyecto cuando projectId y assigneeId cambian juntos y tiene éxito', async () => {
@@ -620,9 +641,9 @@ describe('TasksService', () => {
       mockProjectsRepository.findOne.mockResolvedValue(
         makeProject({ id: 'proj-uuid-2', developers: [newDeveloper] }),
       );
-      mockTasksRepository.save.mockResolvedValue(saved);
+      mockManager.save.mockResolvedValue(saved);
 
-      const result = await service.update('task-uuid-1', dto);
+      const result = await service.update('task-uuid-1', dto, admin);
 
       expect(mockProjectsRepository.findOne).toHaveBeenCalledWith({
         where: { id: 'proj-uuid-2' },
@@ -641,10 +662,10 @@ describe('TasksService', () => {
 
       mockTasksRepository.findOne.mockResolvedValue(task);
 
-      await expect(service.update('task-uuid-1', dto)).rejects.toThrow(
+      await expect(service.update('task-uuid-1', dto, admin)).rejects.toThrow(
         BadRequestException,
       );
-      expect(mockTasksRepository.save).not.toHaveBeenCalled();
+      expect(mockManager.save).not.toHaveBeenCalled();
     });
 
     it('no valida membresía cuando projectId y assigneeId no cambian en un update parcial', async () => {
@@ -656,12 +677,206 @@ describe('TasksService', () => {
       const saved = makeTask({ title: 'Solo título' });
 
       mockTasksRepository.findOne.mockResolvedValue(task);
-      mockTasksRepository.save.mockResolvedValue(saved);
+      mockManager.save.mockResolvedValue(saved);
 
-      const result = await service.update('task-uuid-1', dto);
+      const result = await service.update('task-uuid-1', dto, admin);
 
       expect(mockProjectsRepository.findOne).not.toHaveBeenCalled();
       expect(result.title).toBe('Solo título');
+    });
+
+    // ── auditoría: collectFieldMovements / recordMovements ────────────────────
+
+    it('cambio de status escribe una fila status_change con el admin como actor', async () => {
+      const task = makeTask({ status: TaskStatus.TODO });
+      const dto: UpdateTaskDto = { status: TaskStatus.IN_PROGRESS };
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+
+      await service.update('task-uuid-1', dto, admin);
+
+      expect(mockManager.insert).toHaveBeenCalledWith(TaskMovement, [
+        expect.objectContaining({
+          kind: TaskMovementKind.STATUS_CHANGE,
+          actorKind: TaskMovementActorKind.USER,
+          actorUserId: admin.id,
+          previousValue: TaskStatus.TODO,
+          newValue: TaskStatus.IN_PROGRESS,
+        }),
+      ]);
+    });
+
+    it('cambio de dueDate escribe una fila due_date_change con valores ISO-8601', async () => {
+      const task = makeTask({ dueDate: new Date('2026-08-01T00:00:00.000Z') });
+      const dto: UpdateTaskDto = { dueDate: '2026-09-01T00:00:00.000Z' };
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+
+      await service.update('task-uuid-1', dto, admin);
+
+      expect(mockManager.insert).toHaveBeenCalledWith(TaskMovement, [
+        expect.objectContaining({
+          kind: TaskMovementKind.DUE_DATE_CHANGE,
+          previousValue: '2026-08-01T00:00:00.000Z',
+          newValue: '2026-09-01T00:00:00.000Z',
+        }),
+      ]);
+    });
+
+    it('limpiar dueDate (null explícito) escribe due_date_change con newValue null', async () => {
+      const task = makeTask({ dueDate: new Date('2026-08-01T00:00:00.000Z') });
+      const dto = { dueDate: null } as unknown as UpdateTaskDto;
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+
+      await service.update('task-uuid-1', dto, admin);
+
+      expect(mockManager.insert).toHaveBeenCalledWith(TaskMovement, [
+        expect.objectContaining({
+          kind: TaskMovementKind.DUE_DATE_CHANGE,
+          previousValue: '2026-08-01T00:00:00.000Z',
+          newValue: null,
+        }),
+      ]);
+    });
+
+    it('resubmitir el mismo dueDate no escribe fila (no-op)', async () => {
+      const task = makeTask({ dueDate: new Date('2026-09-01T00:00:00.000Z') });
+      const dto: UpdateTaskDto = { dueDate: '2026-09-01T00:00:00.000Z' };
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+
+      await service.update('task-uuid-1', dto, admin);
+
+      expect(mockManager.insert).not.toHaveBeenCalled();
+    });
+
+    it('cambio de assigneeId (admin, reasignación directa) escribe assignee_change', async () => {
+      const target = makeUser({ id: 'dev-b' });
+      const task = makeTask({
+        projectId: 'proj-uuid-1',
+        assigneeId: 'user-uuid-1',
+      });
+      const dto: UpdateTaskDto = { assigneeId: 'dev-b' };
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+      mockProjectsRepository.findOne.mockResolvedValue(
+        makeProject({ id: 'proj-uuid-1', developers: [target] }),
+      );
+
+      await service.update('task-uuid-1', dto, admin);
+
+      expect(mockManager.insert).toHaveBeenCalledWith(TaskMovement, [
+        expect.objectContaining({
+          kind: TaskMovementKind.ASSIGNEE_CHANGE,
+          actorKind: TaskMovementActorKind.USER,
+          previousValue: 'user-uuid-1',
+          newValue: 'dev-b',
+        }),
+      ]);
+    });
+
+    it('resubmitir el mismo assigneeId no escribe fila (no-op)', async () => {
+      const currentAssignee = makeUser({ id: 'user-uuid-1' });
+      const task = makeTask({
+        projectId: 'proj-uuid-1',
+        assigneeId: 'user-uuid-1',
+      });
+      const dto: UpdateTaskDto = { assigneeId: 'user-uuid-1' };
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+      mockProjectsRepository.findOne.mockResolvedValue(
+        makeProject({ id: 'proj-uuid-1', developers: [currentAssignee] }),
+      );
+
+      await service.update('task-uuid-1', dto, admin);
+
+      expect(mockManager.insert).not.toHaveBeenCalled();
+    });
+
+    it('resubmitir el mismo estimatedHours ("8" almacenado vs 8 numérico en el dto) no escribe fila fantasma', async () => {
+      // GOTCHA: estimated_hours es numeric -> TypeORM lo hidrata como string.
+      const task = makeTask({ estimatedHours: '8' as unknown as number });
+      const dto: UpdateTaskDto = { estimatedHours: 8 };
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+
+      await service.update('task-uuid-1', dto, admin);
+
+      expect(mockManager.insert).not.toHaveBeenCalled();
+    });
+
+    it('cambio real de estimatedHours escribe estimate_change como decimal string', async () => {
+      const task = makeTask({ estimatedHours: '8' as unknown as number });
+      const dto: UpdateTaskDto = { estimatedHours: 12 };
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+
+      await service.update('task-uuid-1', dto, admin);
+
+      expect(mockManager.insert).toHaveBeenCalledWith(TaskMovement, [
+        expect.objectContaining({
+          kind: TaskMovementKind.ESTIMATE_CHANGE,
+          previousValue: '8',
+          newValue: '12',
+        }),
+      ]);
+    });
+
+    it('cambia status + dueDate + estimatedHours + assigneeId a la vez: un solo insert con las 4 filas', async () => {
+      const target = makeUser({ id: 'dev-b' });
+      const task = makeTask({
+        projectId: 'proj-uuid-1',
+        status: TaskStatus.TODO,
+        dueDate: new Date('2026-08-01T00:00:00.000Z'),
+        estimatedHours: '4' as unknown as number,
+        assigneeId: 'user-uuid-1',
+      });
+      const dto: UpdateTaskDto = {
+        status: TaskStatus.IN_PROGRESS,
+        dueDate: '2026-09-01T00:00:00.000Z',
+        estimatedHours: 6,
+        assigneeId: 'dev-b',
+      };
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+      mockProjectsRepository.findOne.mockResolvedValue(
+        makeProject({ id: 'proj-uuid-1', developers: [target] }),
+      );
+
+      await service.update('task-uuid-1', dto, admin);
+
+      expect(mockManager.insert).toHaveBeenCalledTimes(1);
+      const [, rows] = mockManager.insert.mock.calls[0] as [
+        typeof TaskMovement,
+        Record<string, unknown>[],
+      ];
+      expect(rows).toHaveLength(4);
+      expect(rows.map((r) => r.kind)).toEqual(
+        expect.arrayContaining([
+          TaskMovementKind.STATUS_CHANGE,
+          TaskMovementKind.DUE_DATE_CHANGE,
+          TaskMovementKind.ESTIMATE_CHANGE,
+          TaskMovementKind.ASSIGNEE_CHANGE,
+        ]),
+      );
+    });
+
+    it('un fallo en el insert de auditoría revierte toda la transacción (la tarea no se guarda)', async () => {
+      const task = makeTask({ status: TaskStatus.TODO });
+      const dto: UpdateTaskDto = { status: TaskStatus.IN_PROGRESS };
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+      mockTasksRepository.manager.transaction.mockImplementationOnce(
+        (cb: (manager: typeof mockManager) => unknown) => {
+          mockManager.insert.mockRejectedValueOnce(new Error('insert failed'));
+          return cb(mockManager);
+        },
+      );
+
+      await expect(service.update('task-uuid-1', dto, admin)).rejects.toThrow(
+        'insert failed',
+      );
     });
   });
 
@@ -678,7 +893,7 @@ describe('TasksService', () => {
       });
 
       mockTasksRepository.findOne.mockResolvedValue(task);
-      mockTasksRepository.save.mockResolvedValue(saved);
+      mockManager.save.mockResolvedValue(saved);
 
       const result = await service.updateStatus('task-uuid-1', dto, dev);
 
@@ -697,9 +912,6 @@ describe('TasksService', () => {
 
       mockTasksRepository.findOne.mockResolvedValue(task);
       mockTasksRepository.count.mockResolvedValue(2);
-      mockTasksRepository.save.mockImplementation((t: Task) =>
-        Promise.resolve(t),
-      );
 
       await service.updateStatus('task-uuid-1', dto, dev);
 
@@ -719,9 +931,6 @@ describe('TasksService', () => {
       const dto: UpdateStatusDto = { status: TaskStatus.DONE };
 
       mockTasksRepository.findOne.mockResolvedValue(task);
-      mockTasksRepository.save.mockImplementation((t: Task) =>
-        Promise.resolve(t),
-      );
 
       await service.updateStatus('task-uuid-1', dto, dev);
 
@@ -775,7 +984,7 @@ describe('TasksService', () => {
       await expect(
         service.updateStatus('task-uuid-1', dto, dev),
       ).rejects.toThrow(BadRequestException);
-      expect(mockTasksRepository.save).not.toHaveBeenCalled();
+      expect(mockManager.save).not.toHaveBeenCalled();
     });
 
     it('lanza BadRequestException (400) al intentar reabrir una tarea done (done -> in_progress)', async () => {
@@ -788,7 +997,7 @@ describe('TasksService', () => {
       await expect(
         service.updateStatus('task-uuid-1', dto, dev),
       ).rejects.toThrow(BadRequestException);
-      expect(mockTasksRepository.save).not.toHaveBeenCalled();
+      expect(mockManager.save).not.toHaveBeenCalled();
     });
 
     it('permite el no-op done -> done', async () => {
@@ -798,11 +1007,13 @@ describe('TasksService', () => {
       const saved = makeTask({ assigneeId: dev.id, status: TaskStatus.DONE });
 
       mockTasksRepository.findOne.mockResolvedValue(task);
-      mockTasksRepository.save.mockResolvedValue(saved);
+      mockManager.save.mockResolvedValue(saved);
 
       const result = await service.updateStatus('task-uuid-1', dto, dev);
 
       expect(result.status).toBe(TaskStatus.DONE);
+      // El no-op done -> done no debe escribir auditoría
+      expect(mockManager.insert).not.toHaveBeenCalled();
     });
 
     it('lanza BadRequestException (400) al intentar cambiar el estado de una tarea cancelada', async () => {
@@ -820,7 +1031,7 @@ describe('TasksService', () => {
       await expect(
         service.updateStatus('task-uuid-1', dto, dev),
       ).rejects.toThrow(BadRequestException);
-      expect(mockTasksRepository.save).not.toHaveBeenCalled();
+      expect(mockManager.save).not.toHaveBeenCalled();
     });
 
     it('estampa completedAt al transicionar in_progress -> done', async () => {
@@ -833,15 +1044,12 @@ describe('TasksService', () => {
       const dto: UpdateStatusDto = { status: TaskStatus.DONE };
 
       mockTasksRepository.findOne.mockResolvedValue(task);
-      mockTasksRepository.save.mockImplementation((t: Task) =>
-        Promise.resolve(t),
-      );
 
       const result = await service.updateStatus('task-uuid-1', dto, dev);
 
       expect(result.status).toBe(TaskStatus.DONE);
       expect(result.completedAt).toBeInstanceOf(Date);
-      expect(mockTasksRepository.save).toHaveBeenCalledWith(
+      expect(mockManager.save).toHaveBeenCalledWith(
         expect.objectContaining({
           completedAt: expect.any(Date) as Date,
         }),
@@ -858,28 +1066,47 @@ describe('TasksService', () => {
       const dto: UpdateStatusDto = { status: TaskStatus.IN_PROGRESS };
 
       mockTasksRepository.findOne.mockResolvedValue(task);
-      mockTasksRepository.save.mockImplementation((t: Task) =>
-        Promise.resolve(t),
-      );
 
       const result = await service.updateStatus('task-uuid-1', dto, dev);
 
       expect(result.status).toBe(TaskStatus.IN_PROGRESS);
       expect(result.completedAt).toBeNull();
     });
+
+    it('cambio de status escribe una fila status_change con el dev como actor', async () => {
+      const dev = makeUser();
+      const task = makeTask({ assigneeId: dev.id, status: TaskStatus.TODO });
+      const dto: UpdateStatusDto = { status: TaskStatus.IN_PROGRESS };
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+
+      await service.updateStatus('task-uuid-1', dto, dev);
+
+      expect(mockManager.insert).toHaveBeenCalledWith(
+        TaskMovement,
+        expect.objectContaining({
+          kind: TaskMovementKind.STATUS_CHANGE,
+          actorKind: TaskMovementActorKind.USER,
+          actorUserId: dev.id,
+          previousValue: TaskStatus.TODO,
+          newValue: TaskStatus.IN_PROGRESS,
+        }),
+      );
+    });
   });
 
   // ── updateEstimate ────────────────────────────────────────────────────────────
 
   describe('updateEstimate', () => {
+    const dev = makeUser();
+
     it('actualiza estimatedHours cuando el usuario es el asignado', async () => {
-      const dev = makeUser();
       const task = makeTask({ assigneeId: dev.id });
       const dto: UpdateEstimateDto = { estimatedHours: 8 };
       const saved = makeTask({ assigneeId: dev.id, estimatedHours: 8 });
 
       mockTasksRepository.findOne.mockResolvedValue(task);
-      mockTasksRepository.save.mockResolvedValue(saved);
+      mockManager.save.mockResolvedValue(saved);
 
       const result = await service.updateEstimate('task-uuid-1', dto, dev);
 
@@ -887,20 +1114,19 @@ describe('TasksService', () => {
     });
 
     it('lanza ForbiddenException (403) cuando el usuario no es el asignado', async () => {
-      const dev = makeUser({ id: 'other-user' });
+      const other = makeUser({ id: 'other-user' });
       const task = makeTask({ assigneeId: 'user-uuid-1' });
       const dto: UpdateEstimateDto = { estimatedHours: 4 };
 
       mockTasksRepository.findOne.mockResolvedValue(task);
 
       await expect(
-        service.updateEstimate('task-uuid-1', dto, dev),
+        service.updateEstimate('task-uuid-1', dto, other),
       ).rejects.toThrow(ForbiddenException);
     });
 
     it('lanza NotFoundException (404) cuando la tarea no existe', async () => {
       mockTasksRepository.findOne.mockResolvedValue(null);
-      const dev = makeUser();
 
       await expect(
         service.updateEstimate('nonexistent', { estimatedHours: 4 }, dev),
@@ -908,7 +1134,6 @@ describe('TasksService', () => {
     });
 
     it('lanza BadRequestException (400) al intentar actualizar la estimación de una tarea done', async () => {
-      const dev = makeUser();
       const task = makeTask({ assigneeId: dev.id, status: TaskStatus.DONE });
       const dto: UpdateEstimateDto = { estimatedHours: 4 };
 
@@ -917,11 +1142,10 @@ describe('TasksService', () => {
       await expect(
         service.updateEstimate('task-uuid-1', dto, dev),
       ).rejects.toThrow(BadRequestException);
-      expect(mockTasksRepository.save).not.toHaveBeenCalled();
+      expect(mockManager.save).not.toHaveBeenCalled();
     });
 
     it('lanza BadRequestException (400) al intentar actualizar la estimación de una tarea cancelled', async () => {
-      const dev = makeUser();
       const task = makeTask({
         assigneeId: dev.id,
         status: TaskStatus.CANCELLED,
@@ -933,30 +1157,68 @@ describe('TasksService', () => {
       await expect(
         service.updateEstimate('task-uuid-1', dto, dev),
       ).rejects.toThrow(BadRequestException);
-      expect(mockTasksRepository.save).not.toHaveBeenCalled();
+      expect(mockManager.save).not.toHaveBeenCalled();
+    });
+
+    it('cambio real de estimatedHours escribe una fila estimate_change con el dev como actor', async () => {
+      const task = makeTask({
+        assigneeId: dev.id,
+        estimatedHours: '4' as unknown as number,
+      });
+      const dto: UpdateEstimateDto = { estimatedHours: 9 };
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+
+      await service.updateEstimate('task-uuid-1', dto, dev);
+
+      expect(mockManager.insert).toHaveBeenCalledWith(TaskMovement, [
+        expect.objectContaining({
+          kind: TaskMovementKind.ESTIMATE_CHANGE,
+          actorKind: TaskMovementActorKind.USER,
+          actorUserId: dev.id,
+          previousValue: '4',
+          newValue: '9',
+        }),
+      ]);
+    });
+
+    it('resubmitir el mismo estimatedHours (gotcha string vs number) no escribe fila', async () => {
+      const task = makeTask({
+        assigneeId: dev.id,
+        estimatedHours: '8' as unknown as number,
+      });
+      const dto: UpdateEstimateDto = { estimatedHours: 8 };
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+
+      await service.updateEstimate('task-uuid-1', dto, dev);
+
+      expect(mockManager.insert).not.toHaveBeenCalled();
     });
   });
 
   // ── softCancel ────────────────────────────────────────────────────────────────
 
   describe('softCancel', () => {
+    const admin = makeUser({ id: 'admin-uuid-1', role: UserRole.ADMIN });
+
     it('establece status CANCELLED sin eliminar la fila', async () => {
       const task = makeTask();
       const saved = makeTask({ status: TaskStatus.CANCELLED });
 
       mockTasksRepository.findOne.mockResolvedValue(task);
-      mockTasksRepository.save.mockResolvedValue(saved);
+      mockManager.save.mockResolvedValue(saved);
 
-      const result = await service.softCancel('task-uuid-1');
+      const result = await service.softCancel('task-uuid-1', admin);
 
-      expect(mockTasksRepository.save).toHaveBeenCalled();
+      expect(mockManager.save).toHaveBeenCalled();
       expect(result.status).toBe(TaskStatus.CANCELLED);
     });
 
     it('lanza NotFoundException (404) cuando la tarea no existe', async () => {
       mockTasksRepository.findOne.mockResolvedValue(null);
 
-      await expect(service.softCancel('nonexistent')).rejects.toThrow(
+      await expect(service.softCancel('nonexistent', admin)).rejects.toThrow(
         NotFoundException,
       );
     });
@@ -966,10 +1228,10 @@ describe('TasksService', () => {
 
       mockTasksRepository.findOne.mockResolvedValue(task);
 
-      await expect(service.softCancel('task-uuid-1')).rejects.toThrow(
+      await expect(service.softCancel('task-uuid-1', admin)).rejects.toThrow(
         BadRequestException,
       );
-      expect(mockTasksRepository.save).not.toHaveBeenCalled();
+      expect(mockManager.save).not.toHaveBeenCalled();
     });
 
     it('asigna position al final de la columna cancelled', async () => {
@@ -980,16 +1242,43 @@ describe('TasksService', () => {
 
       mockTasksRepository.findOne.mockResolvedValue(task);
       mockTasksRepository.count.mockResolvedValue(4);
-      mockTasksRepository.save.mockImplementation((t: Task) =>
-        Promise.resolve(t),
-      );
 
-      await service.softCancel('task-uuid-1');
+      await service.softCancel('task-uuid-1', admin);
 
       expect(mockTasksRepository.count).toHaveBeenCalledWith({
         where: { projectId: 'proj-uuid-9', status: TaskStatus.CANCELLED },
       });
       expect(task.position).toBe(4);
+    });
+
+    it('escribe una fila cancelled con el status previo como previousValue y el admin como actor', async () => {
+      const task = makeTask({ status: TaskStatus.IN_PROGRESS });
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+
+      await service.softCancel('task-uuid-1', admin);
+
+      expect(mockManager.insert).toHaveBeenCalledWith(TaskMovement, {
+        taskId: task.id,
+        projectId: task.projectId,
+        actorKind: TaskMovementActorKind.USER,
+        actorUserId: admin.id,
+        kind: TaskMovementKind.CANCELLED,
+        previousValue: TaskStatus.IN_PROGRESS,
+        newValue: TaskStatus.CANCELLED,
+      });
+    });
+
+    it('no-op: cancelar una tarea ya cancelada no escribe auditoría ni llama a save', async () => {
+      const task = makeTask({ status: TaskStatus.CANCELLED });
+
+      mockTasksRepository.findOne.mockResolvedValue(task);
+
+      const result = await service.softCancel('task-uuid-1', admin);
+
+      expect(mockManager.save).not.toHaveBeenCalled();
+      expect(mockManager.insert).not.toHaveBeenCalled();
+      expect(result.status).toBe(TaskStatus.CANCELLED);
     });
   });
 
@@ -1032,6 +1321,8 @@ describe('TasksService', () => {
       expect(mockTasksRepository.update).toHaveBeenCalledWith('task-b', {
         position: 2,
       });
+      // Reorder-within-column está explícitamente excluido del audit log.
+      expect(mockManager.insert).not.toHaveBeenCalled();
     });
 
     it('lanza BadRequestException (400) cuando taskIds no coincide con el set actual (board obsoleto)', async () => {

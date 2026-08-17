@@ -215,28 +215,35 @@ describe('TasksController', () => {
   // ── PATCH /tasks/:id ─────────────────────────────────────────────────────────
 
   describe('update', () => {
-    it('llama a TasksService.update con id y DTO', async () => {
+    it('llama a TasksService.update con id, DTO y el usuario actual', async () => {
+      const admin = makeUser({ id: 'admin-uuid-1', role: UserRole.ADMIN });
       const dto: UpdateTaskDto = { title: 'Actualizada' };
       const responseDto = makeResponseDto({ title: 'Actualizada' });
       mockTasksService.update.mockResolvedValue(responseDto);
 
-      const result = await controller.update('task-uuid-1', dto);
+      const result = await controller.update('task-uuid-1', dto, admin);
 
-      expect(mockTasksService.update).toHaveBeenCalledWith('task-uuid-1', dto);
+      expect(mockTasksService.update).toHaveBeenCalledWith(
+        'task-uuid-1',
+        dto,
+        admin,
+      );
       expect(result).toBe(responseDto);
     });
 
     it('propaga NotFoundException (404) cuando la tarea no existe', async () => {
+      const admin = makeUser({ id: 'admin-uuid-1', role: UserRole.ADMIN });
       mockTasksService.update.mockRejectedValue(
         new NotFoundException('Task not found'),
       );
 
-      await expect(controller.update('nonexistent', {})).rejects.toThrow(
+      await expect(controller.update('nonexistent', {}, admin)).rejects.toThrow(
         NotFoundException,
       );
     });
 
     it('propaga BadRequestException (400) cuando el servicio rechaza reabrir una tarea done', async () => {
+      const admin = makeUser({ id: 'admin-uuid-1', role: UserRole.ADMIN });
       const dto: UpdateTaskDto = { status: TaskStatus.TODO };
       mockTasksService.update.mockRejectedValue(
         new BadRequestException(
@@ -244,9 +251,9 @@ describe('TasksController', () => {
         ),
       );
 
-      await expect(controller.update('task-uuid-1', dto)).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        controller.update('task-uuid-1', dto, admin),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 
@@ -337,34 +344,40 @@ describe('TasksController', () => {
   // ── DELETE /tasks/:id ────────────────────────────────────────────────────────
 
   describe('softCancel', () => {
-    it('llama a TasksService.softCancel con el id', async () => {
+    it('llama a TasksService.softCancel con el id y el usuario actual', async () => {
+      const admin = makeUser({ id: 'admin-uuid-1', role: UserRole.ADMIN });
       const responseDto = makeResponseDto({ status: TaskStatus.CANCELLED });
       mockTasksService.softCancel.mockResolvedValue(responseDto);
 
-      const result = await controller.softCancel('task-uuid-1');
+      const result = await controller.softCancel('task-uuid-1', admin);
 
-      expect(mockTasksService.softCancel).toHaveBeenCalledWith('task-uuid-1');
+      expect(mockTasksService.softCancel).toHaveBeenCalledWith(
+        'task-uuid-1',
+        admin,
+      );
       expect(result.status).toBe(TaskStatus.CANCELLED);
     });
 
     it('propaga NotFoundException (404) cuando la tarea no existe', async () => {
+      const admin = makeUser({ id: 'admin-uuid-1', role: UserRole.ADMIN });
       mockTasksService.softCancel.mockRejectedValue(
         new NotFoundException('Task not found'),
       );
 
-      await expect(controller.softCancel('nonexistent')).rejects.toThrow(
+      await expect(controller.softCancel('nonexistent', admin)).rejects.toThrow(
         NotFoundException,
       );
     });
 
     it('propaga BadRequestException (400) cuando el servicio rechaza cancelar una tarea done', async () => {
+      const admin = makeUser({ id: 'admin-uuid-1', role: UserRole.ADMIN });
       mockTasksService.softCancel.mockRejectedValue(
         new BadRequestException(
           'A completed task cannot change status. Create a new task instead.',
         ),
       );
 
-      await expect(controller.softCancel('task-uuid-1')).rejects.toThrow(
+      await expect(controller.softCancel('task-uuid-1', admin)).rejects.toThrow(
         BadRequestException,
       );
     });
