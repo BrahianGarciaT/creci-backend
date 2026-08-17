@@ -54,7 +54,6 @@ function makeResponseDto(
 
 const mockTasksService = {
   create: jest.fn(),
-  findAll: jest.fn(),
   findByProject: jest.fn(),
   reorderColumn: jest.fn(),
   update: jest.fn(),
@@ -105,37 +104,6 @@ describe('TasksController', () => {
     });
   });
 
-  // ── GET /tasks ───────────────────────────────────────────────────────────────
-
-  describe('findAll', () => {
-    it('llama a TasksService.findAll con la query de paginación y devuelve el envelope', async () => {
-      const dtos = [makeResponseDto()];
-      const paginated = {
-        data: dtos,
-        meta: { total: 1, page: 1, limit: 20, totalPages: 1 },
-      };
-      mockTasksService.findAll.mockResolvedValue(paginated);
-
-      const result = await controller.findAll({});
-
-      expect(mockTasksService.findAll).toHaveBeenCalledWith({});
-      expect(result).toBe(paginated);
-    });
-
-    it('pasa projectId a TasksService.findAll cuando se provee como query param', async () => {
-      mockTasksService.findAll.mockResolvedValue({
-        data: [],
-        meta: { total: 0, page: 1, limit: 20, totalPages: 0 },
-      });
-
-      await controller.findAll({ projectId: 'proj-uuid-1' });
-
-      expect(mockTasksService.findAll).toHaveBeenCalledWith({
-        projectId: 'proj-uuid-1',
-      });
-    });
-  });
-
   // ── GET /tasks/project/:projectId ────────────────────────────────────────────
 
   describe('findByProject', () => {
@@ -167,6 +135,26 @@ describe('TasksController', () => {
       await expect(
         controller.findByProject('proj-uuid-1', dev, {}),
       ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('pasa all=true a TasksService.findByProject cuando se provee como query param', async () => {
+      const dev = makeUser();
+      const paginated = {
+        data: [makeResponseDto()],
+        meta: { total: 1, page: 1, limit: 1, totalPages: 1 },
+      };
+      mockTasksService.findByProject.mockResolvedValue(paginated);
+
+      const result = await controller.findByProject('proj-uuid-1', dev, {
+        all: true,
+      });
+
+      expect(mockTasksService.findByProject).toHaveBeenCalledWith(
+        'proj-uuid-1',
+        dev,
+        { all: true },
+      );
+      expect(result).toBe(paginated);
     });
   });
 
@@ -402,11 +390,6 @@ describe('TasksController', () => {
   describe('RolesGuard metadata', () => {
     it('el handler create tiene @Roles(UserRole.ADMIN)', () => {
       const roles = getRolesMetadata('create');
-      expect(roles).toContain(UserRole.ADMIN);
-    });
-
-    it('el handler findAll tiene @Roles(UserRole.ADMIN)', () => {
-      const roles = getRolesMetadata('findAll');
       expect(roles).toContain(UserRole.ADMIN);
     });
 
